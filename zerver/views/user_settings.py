@@ -18,13 +18,15 @@ from zerver.lib.send_email import send_email, FromAddress
 from zerver.lib.i18n import get_available_language_codes
 from zerver.lib.response import json_success, json_error
 from zerver.lib.upload import upload_avatar_image
-from zerver.lib.validator import check_bool, check_string
+from zerver.lib.validator import check_bool, check_string, check_int
 from zerver.lib.request import JsonableError
 from zerver.lib.timezone import get_all_timezones
-from zerver.models import UserProfile, name_changes_disabled
+from zerver.models import UserProfile, name_changes_disabled, avatar_changes_disabled
 from confirmation.models import get_object_from_key, render_confirmation_key_error, \
     ConfirmationKeyException, Confirmation
 from zproject.backends import email_belongs_to_ldap
+
+AVATAR_CHANGES_DISABLED_ERROR = _("Avatar changes are disabled in this organization.")
 
 def confirm_email_change(request: HttpRequest, confirmation_key: str) -> HttpResponse:
     try:
@@ -117,25 +119,31 @@ def update_display_settings_backend(
         twenty_four_hour_time: Optional[bool]=REQ(validator=check_bool, default=None),
         dense_mode: Optional[bool]=REQ(validator=check_bool, default=None),
         starred_message_counts: Optional[bool]=REQ(validator=check_bool, default=None),
+        fluid_layout_width: Optional[bool]=REQ(validator=check_bool, default=None),
         high_contrast_mode: Optional[bool]=REQ(validator=check_bool, default=None),
         night_mode: Optional[bool]=REQ(validator=check_bool, default=None),
         translate_emoticons: Optional[bool]=REQ(validator=check_bool, default=None),
         default_language: Optional[bool]=REQ(validator=check_string, default=None),
         left_side_userlist: Optional[bool]=REQ(validator=check_bool, default=None),
         emojiset: Optional[str]=REQ(validator=check_string, default=None),
+        demote_inactive_streams: Optional[int]=REQ(validator=check_int, default=None),
         timezone: Optional[str]=REQ(validator=check_string, default=None)) -> HttpResponse:
 
     if (default_language is not None and
             default_language not in get_available_language_codes()):
-        raise JsonableError(_("Invalid language '%s'" % (default_language,)))
+        raise JsonableError(_("Invalid language '%s'") % (default_language,))
 
     if (timezone is not None and
             timezone not in get_all_timezones()):
-        raise JsonableError(_("Invalid timezone '%s'" % (timezone,)))
+        raise JsonableError(_("Invalid timezone '%s'") % (timezone,))
 
     if (emojiset is not None and
-            emojiset not in UserProfile.emojiset_choices()):
-        raise JsonableError(_("Invalid emojiset '%s'" % (emojiset,)))
+            emojiset not in [emojiset_choice['key'] for emojiset_choice in UserProfile.emojiset_choices()]):
+        raise JsonableError(_("Invalid emojiset '%s'") % (emojiset,))
+
+    if (demote_inactive_streams is not None and
+            demote_inactive_streams not in UserProfile.DEMOTE_STREAMS_CHOICES):
+        raise JsonableError(_("Invalid setting value '%s'") % (demote_inactive_streams,))
 
     request_settings = {k: v for k, v in list(locals().items()) if k in user_profile.property_types}
     result = {}  # type: Dict[str, Any]
@@ -153,7 +161,7 @@ def json_change_notify_settings(
         enable_stream_desktop_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
         enable_stream_email_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
         enable_stream_push_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
-        enable_stream_sounds: Optional[bool]=REQ(validator=check_bool, default=None),
+        enable_stream_audible_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
         notification_sound: Optional[str]=REQ(validator=check_string, default=None),
         enable_desktop_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
         enable_sounds: Optional[bool]=REQ(validator=check_bool, default=None),
@@ -164,6 +172,7 @@ def json_change_notify_settings(
         enable_login_emails: Optional[bool]=REQ(validator=check_bool, default=None),
         message_content_in_email_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
         pm_content_in_desktop_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
+        desktop_icon_count_display: Optional[int]=REQ(validator=check_int, default=None),
         realm_name_in_notifications: Optional[bool]=REQ(validator=check_bool, default=None)
 ) -> HttpResponse:
     result = {}
@@ -187,6 +196,9 @@ def set_avatar_backend(request: HttpRequest, user_profile: UserProfile) -> HttpR
     if len(request.FILES) != 1:
         return json_error(_("You must upload exactly one avatar."))
 
+    if avatar_changes_disabled(user_profile.realm) and not user_profile.is_realm_admin:
+        return json_error(AVATAR_CHANGES_DISABLED_ERROR)
+
     user_file = list(request.FILES.values())[0]
     if ((settings.MAX_AVATAR_FILE_SIZE * 1024 * 1024) < user_file.size):
         return json_error(_("Uploaded file is larger than the allowed limit of %s MB") % (
@@ -201,6 +213,9 @@ def set_avatar_backend(request: HttpRequest, user_profile: UserProfile) -> HttpR
     return json_success(json_result)
 
 def delete_avatar_backend(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:
+    if avatar_changes_disabled(user_profile.realm) and not user_profile.is_realm_admin:
+        return json_error(AVATAR_CHANGES_DISABLED_ERROR)
+
     do_change_avatar_fields(user_profile, UserProfile.AVATAR_FROM_GRAVATAR)
     gravatar_url = avatar_url(user_profile)
 
@@ -213,9 +228,9 @@ def delete_avatar_backend(request: HttpRequest, user_profile: UserProfile) -> Ht
 # a bot regenerating its own API key.
 @has_request_variables
 def regenerate_api_key(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:
-    do_regenerate_api_key(user_profile, user_profile)
+    new_api_key = do_regenerate_api_key(user_profile, user_profile)
     json_result = dict(
-        api_key = user_profile.api_key
+        api_key = new_api_key
     )
     return json_success(json_result)
 

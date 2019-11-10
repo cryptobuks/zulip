@@ -5,8 +5,8 @@ be a good alternative for those with poor network connectivity or who have
 limited storage/memory on their local machines.
 
 We recommend giving the Zulip development environment its own virtual
-machine, running Ubuntu 14.04 or
-16.04, with at least 2GB of memory. If the Zulip development
+machine, running Ubuntu 16.04 or
+18.04, with at least 2GB of memory. If the Zulip development
 environment will be the only thing running on the remote virtual
 machine, we recommend installing
 [directly][install-direct]. Otherwise, we recommend the
@@ -81,8 +81,7 @@ This will start up the Zulip server on port 9991. You can then
 navigate to `http://<REMOTE_IP>:9991` and you should see something like
 this screenshot of the Zulip development environment:
 
-![Image of Zulip development
-environment](../images/zulip-dev.png)
+![Image of Zulip development environment](../images/zulip-dev.png)
 
 The `--interface=''` option makes the Zulip development environment
 accessible from any IP address (in contrast with the much more secure
@@ -116,7 +115,9 @@ To see changes on your remote development server, you need to do one of the foll
   on your remote Zulip development instance, sync with Git.
 * [Edit remotely](#editing-remotely): Edit code directly on your remote
   Zulip development instance using a [Web-based IDE](#web-based-ide) (recommended for
-  beginners) or a [command line editor](#command-line-editors).
+  beginners) or a [command line editor](#command-line-editors), or a
+  [desktop IDE](#desktop-gui-editors) using a plugin to sync your
+  changes to the server when you save.
 
 #### Editing locally
 
@@ -129,7 +130,7 @@ don't have a favorite, here are some suggestions:
 * [spacemacs](https://github.com/syl20bnr/spacemacs)
 * [sublime](https://www.sublimetext.com/)
 
-Next, follow our [Git and GitHub Guide](../git/index.html) to clone and configure
+Next, follow our [Git and GitHub Guide](../git/index.md) to clone and configure
 your fork of zulip on your local computer.
 
 Once you have cloned your code locally, you can get to work.
@@ -165,24 +166,46 @@ from your remote development instance:
 
 #### Editing remotely
 
-##### Web-based IDE
+There are a few good ways to edit code in your remote development
+environment:
 
-If you are relatively new to working on the command line, or just want to get
-started working quickly, we recommend web-based IDE
-[Codeanywhere][codeanywhere].
+* With a command-line editor like vim or emacs run over SSH.
+* With a desktop GUI editor like VS Code or Atom and a plugin for
+  syncing your changes to the remote server.
+* With a web-based IDE like CodeAnywhere.
 
-To setup Codeanywhere for Zulip:
+We document these options below; we recommend using whatever editor
+you prefer for development in general.
 
-1. Create a [Codeanywhere][codeanywhere] account and log in.
-2. Create a new **SFTP-SSH** project. Use *Public key* for authentication.
-3. Click **GET YOUR PUBLIC KEY** to get the new public key that
-   Codeanywhere generates when you create a new project. Add this public key to
-   `~/.ssh/authorized_keys` on your remote development instance.
-4. Once you've added the new public key to your remote development instance, click
-   *CONNECT*.
+##### Desktop GUI editors
 
-Now your workspace should look similar this:
-![Codeanywhere workspace][img-ca-workspace]
+If you use [TextMate](https://macromates.com), Atom, VS Code, or a
+similar GUI editor, tools like
+[rmate](https://github.com/textmate/rmate) that are designed to
+integrate that editor with remote development over SSH allow you to
+develop remotely from the comfort of your local machine.
+
+Similar packages/extensions exist for other popular code editors as
+well; contributions of precise documentation for them are welcome!
+
+To setup [rmate](https://github.com/textmate/rmate) for VS Code:
+1. Install the extension
+[Remote VSCode](https://marketplace.visualstudio.com/items?itemName=rafaelmaiolla.remote-vscode).
+2. On your remote machine, run:
+```
+$ curl -Lo ~/bin/rmate https://raw.githubusercontent.com/textmate/rmate/master/bin/rmate
+$ chmod a+x ~/bin/rmate
+```
+3. Make sure the remote server is running in VS Code (you can force-start through the Command Palette).
+4. SSH to your remote machine using
+```
+$ ssh -R 52698:localhost:52698 user@example.org
+```
+5. On your remote machine, run
+```
+$ rmate [options] file
+```
+and the file should open up in VS Code. Any changes you make now will be saved remotely.
 
 ##### Command line editors
 
@@ -206,6 +229,25 @@ Other options include:
 * [emacs](https://www.gnu.org/software/emacs/)
 * [spacemacs](https://github.com/syl20bnr/spacemacs)
 
+##### Web-based IDE
+
+If you are relatively new to working on the command line, or just want to get
+started working quickly, we recommend web-based IDE
+[Codeanywhere][codeanywhere].
+
+To setup Codeanywhere for Zulip:
+
+1. Create a [Codeanywhere][codeanywhere] account and log in.
+2. Create a new **SFTP-SSH** project. Use *Public key* for authentication.
+3. Click **GET YOUR PUBLIC KEY** to get the new public key that
+   Codeanywhere generates when you create a new project. Add this public key to
+   `~/.ssh/authorized_keys` on your remote development instance.
+4. Once you've added the new public key to your remote development instance, click
+   *CONNECT*.
+
+Now your workspace should look similar this:
+![Codeanywhere workspace][img-ca-workspace]
+
 #### Next steps
 
 Next, read the following to learn more about developing for Zulip:
@@ -215,10 +257,10 @@ Next, read the following to learn more about developing for Zulip:
 * [Testing][rtd-testing]
 
 [install-direct]: ../development/setup-advanced.html#installing-directly-on-ubuntu-debian-centos-or-fedora
-[install-vagrant]: ../development/setup-vagrant.html
-[rtd-git-guide]: ../git/index.html
-[rtd-using-dev-env]: using.html
-[rtd-testing]: ../testing/testing.html
+[install-vagrant]: ../development/setup-vagrant.md
+[rtd-git-guide]: ../git/index.md
+[rtd-using-dev-env]: using.md
+[rtd-testing]: ../testing/testing.md
 [git-bash]: https://git-for-windows.github.io/
 [codeanywhere]: https://codeanywhere.com/
 [img-ca-settings]: ../images/codeanywhere-settings.png
@@ -251,7 +293,7 @@ different.
 
     ```
     apt install -y nginx-full
-    cp -a /home/zulipdev/zulip/tools/nginx/zulipdev /etc/nginx/sites-available/
+    cp -a /home/zulipdev/zulip/tools/droplets/zulipdev /etc/nginx/sites-available/
     ln -nsf /etc/nginx/sites-available/zulipdev /etc/nginx/sites-enabled/
     nginx -t  # Verifies your nginx configuration
     service nginx reload  # Actually enabled your nginx configuration

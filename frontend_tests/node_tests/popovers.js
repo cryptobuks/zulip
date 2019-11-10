@@ -8,8 +8,12 @@ zrequire('people');
 zrequire('presence');
 zrequire('buddy_data');
 zrequire('user_status');
+zrequire('settings_org');
+zrequire('feature_flags');
+zrequire('message_edit');
+zrequire('util');
 
-var noop =  function () {};
+const noop =  function () {};
 $.fn.popover = noop; // this will get wrapped by our code
 
 zrequire('popovers');
@@ -17,10 +21,11 @@ popovers.hide_user_profile = noop;
 
 set_global('current_msg_list', {});
 set_global('page_params', {
+    is_admin: false,
+    realm_email_address_visibility: 3,
     custom_profile_fields: [],
 });
 set_global('rows', {});
-set_global('templates', {});
 
 
 set_global('message_viewport', {
@@ -36,25 +41,39 @@ set_global('stream_popover', {
     hide_topic_popover: noop,
     hide_all_messages_popover: noop,
     hide_starred_messages_popover: noop,
-    restore_stream_list_size: noop,
+    hide_streamlist_sidebar: noop,
 });
+
+set_global('stream_data', {});
 
 set_global('ClipboardJS', function (sel) {
     assert.equal(sel, '.copy_link');
 });
 
-var alice = {
+const alice = {
     email: 'alice@example.com',
     full_name: 'Alice Smith',
     user_id: 42,
     is_guest: false,
+    is_admin: false,
 };
 
-var me = {
+const me = {
     email: 'me@example.com',
     user_id: 30,
     full_name: 'Me Myself',
     timezone: 'US/Pacific',
+};
+
+const target = $.create('click target');
+target.offset = () => {
+    return {
+        top: 10,
+    };
+};
+
+const e = {
+    stopPropagation: noop,
 };
 
 function initialize_people() {
@@ -67,10 +86,10 @@ function initialize_people() {
 initialize_people();
 
 function make_image_stubber() {
-    var images = [];
+    const images = [];
 
     function stub_image() {
-        var image = {};
+        const image = {};
         image.to_$ = () => {
             return {
                 on: (name, f) => {
@@ -92,16 +111,13 @@ function make_image_stubber() {
     };
 }
 
+popovers.register_click_handlers();
+
 run_test('sender_hover', () => {
-    popovers.register_click_handlers();
+    const selection = ".sender_name, .sender_name-in-status, .inline_profile_picture";
+    const handler = $('#main_div').get_on_handler('click', selection);
 
-    var selection = ".sender_name, .sender_name-in-status, .inline_profile_picture";
-    var handler = $('#main_div').get_on_handler('click', selection);
-    var e = {
-        stopPropagation: noop,
-    };
-
-    var message = {
+    const message = {
         id: 999,
         sender_id: alice.user_id,
     };
@@ -110,14 +126,6 @@ run_test('sender_hover', () => {
         user_id: alice.user_id,
         status_text: 'on the beach',
     });
-
-    var target = $.create('click target');
-
-    target.offset = () => {
-        return {
-            top: 10,
-        };
-    };
 
     rows.id = () => message.id;
 
@@ -135,7 +143,7 @@ run_test('sender_hover', () => {
         return {};
     };
 
-    templates.render = function (fn, opts) {
+    global.stub_templates(function (fn, opts) {
         switch (fn) {
         case 'no_arrow_popover':
             assert.deepEqual(opts, {
@@ -164,6 +172,7 @@ run_test('sender_hover', () => {
                 pm_with_uri: '#narrow/pm-with/42-alice',
                 sent_by_uri: '#narrow/sender/42-alice',
                 private_message_class: 'respond_personal_button',
+                show_email: false,
                 show_user_profile: false,
                 is_me: false,
                 is_active: true,
@@ -176,16 +185,67 @@ run_test('sender_hover', () => {
         default:
             throw Error('unrecognized template: ' + fn);
         }
-    };
+    });
 
     $('.user_popover_email').each = noop;
 
-    var image_stubber = make_image_stubber();
+    const image_stubber = make_image_stubber();
 
     handler.call(target, e);
 
-    var avatar_img = image_stubber.get(0);
+    const avatar_img = image_stubber.get(0);
     assert.equal(avatar_img.src, 'avatar/42/medium');
 
     // todo: load image
+});
+
+run_test('actions_popover', () => {
+    const handler = $('#main_div').get_on_handler('click', '.actions_hover');
+
+    window.location = {
+        protocol: 'http:',
+        host: 'chat.zulip.org',
+        pathname: '/',
+    };
+
+    const message = {
+        id: 999,
+        topic: 'Actions (1)',
+        type: 'stream',
+        stream_id: 123,
+    };
+
+    current_msg_list.get = (msg_id) => {
+        assert.equal(msg_id, message.id);
+        return message;
+    };
+
+    message_edit.get_editability = () => 4;
+
+    stream_data.id_to_slug = (stream_id) => {
+        assert.equal(stream_id, 123);
+        return 'Bracket ( stream';
+    };
+
+    target.closest = (sel) => {
+        assert.equal(sel, '.message_row');
+        return {
+            toggleClass: noop,
+        };
+    };
+
+    global.stub_templates(function (fn, opts) {
+        // TODO: Test all the properties of the popover
+        switch (fn) {
+        case 'actions_popover_content':
+            assert.equal(
+                opts.conversation_time_uri,
+                'http://chat.zulip.org/#narrow/stream/Bracket.20%28.20stream/topic/Actions.20%281%29/near/999');
+            return 'actions-content';
+        default:
+            throw Error('unrecognized template: ' + fn);
+        }
+    });
+
+    handler.call(target, e);
 });

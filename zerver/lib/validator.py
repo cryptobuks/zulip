@@ -60,8 +60,8 @@ def check_capped_string(max_length: int) -> Validator:
         if not isinstance(val, str):
             return _('%s is not a string') % (var_name,)
         if len(val) > max_length:
-            return _("{var_name} is too long (limit: {max_length} characters)".format(
-                var_name=var_name, max_length=max_length))
+            return _("{var_name} is too long (limit: {max_length} characters)").format(
+                var_name=var_name, max_length=max_length)
         return None
     return validator
 
@@ -70,8 +70,8 @@ def check_string_fixed_length(length: int) -> Validator:
         if not isinstance(val, str):
             return _('%s is not a string') % (var_name,)
         if len(val) != length:
-            return _("{var_name} has incorrect length {length}; should be {target_length}".format(
-                var_name=var_name, target_length=length, length=len(val)))
+            return _("{var_name} has incorrect length {length}; should be {target_length}").format(
+                var_name=var_name, target_length=length, length=len(val))
         return None
     return validator
 
@@ -174,7 +174,7 @@ def check_dict(required_keys: Iterable[Tuple[str, Validator]]=[],
             optional_keys_set = set(x[0] for x in optional_keys)
             delta_keys = set(val.keys()) - required_keys_set - optional_keys_set
             if len(delta_keys) != 0:
-                return _("Unexpected arguments: %s" % (", ".join(list(delta_keys))))
+                return _("Unexpected arguments: %s") % (", ".join(list(delta_keys)),)
 
         return None
 
@@ -228,7 +228,22 @@ def check_url(var_name: str, val: object) -> Optional[str]:
     except ValidationError:
         return _('%s is not a URL') % (var_name,)
 
-def validate_field_data(field_data: ProfileFieldData) -> Optional[str]:
+def check_external_account_url_pattern(var_name: str, val: object) -> Optional[str]:
+    error = check_string(var_name, val)
+    if error:
+        return error
+    val = cast(str, val)
+
+    if val.count('%(username)s') != 1:
+        return _('Malformed URL pattern.')
+    url_val = val.replace('%(username)s', 'username')
+
+    error = check_url(var_name, url_val)
+    if error:
+        return error
+    return None
+
+def validate_choice_field_data(field_data: ProfileFieldData) -> Optional[str]:
     """
     This function is used to validate the data sent to the server while
     creating/editing choices of the choice field in Organization settings.
@@ -313,3 +328,18 @@ def to_non_negative_int(s: str, max_int_size: int=2**32-1) -> int:
     if x > max_int_size:
         raise ValueError('%s is too large (max %s)' % (x, max_int_size))
     return x
+
+def check_string_or_int_list(var_name: str, val: object) -> Optional[str]:
+    if isinstance(val, str):
+        return None
+
+    if not isinstance(val, list):
+        return _('%s is not a string or an integer list') % (var_name,)
+
+    return check_list(check_int)(var_name, val)
+
+def check_string_or_int(var_name: str, val: object) -> Optional[str]:
+    if isinstance(val, str) or isinstance(val, int):
+        return None
+
+    return _('%s is not a string or integer') % (var_name,)

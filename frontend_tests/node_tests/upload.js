@@ -6,7 +6,9 @@ set_global('navigator', {
     userAgent: 'Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)',
 });
 set_global('i18n', global.stub_i18n);
-set_global('page_params', { });
+set_global('page_params', {
+    max_file_upload_size: 25,
+});
 set_global('csrf_token', { });
 global.patch_builtin('window', {
     bridge: false,
@@ -22,7 +24,7 @@ zrequire('compose_state');
 zrequire('compose');
 zrequire('upload');
 
-var upload_opts = upload.options({ mode: "compose" });
+const upload_opts = upload.options({ mode: "compose" });
 
 run_test('upload_started', () => {
     $("#compose-send-button").prop('disabled', false);
@@ -32,7 +34,7 @@ run_test('upload_started', () => {
         assert(handler);
     };
     $("#compose-error-msg").html('');
-    var test_html = '<div class="progress active">' +
+    const test_html = '<div class="progress active">' +
                     '<div class="bar" id="compose-upload-bar-1549958107000" style="width: 0"></div>' +
                     '</div>';
     $("#compose-send-status").append = function (html) {
@@ -47,7 +49,7 @@ run_test('upload_started', () => {
 
     upload_opts.drop();
     upload_opts.uploadStarted(0, {
-        lastModified: 1549958107000,
+        trackingId: "1549958107000",
         name: 'some-file',
     }, 1);
 
@@ -58,12 +60,12 @@ run_test('upload_started', () => {
 });
 
 run_test('progress_updated', () => {
-    var width_update_checked = false;
+    let width_update_checked = false;
     $("#compose-upload-bar-1549958107000").width = function (width_percent) {
         assert.equal(width_percent, '39%');
         width_update_checked = true;
     };
-    upload_opts.progressUpdated(1, {lastModified: 1549958107000}, 39);
+    upload_opts.progressUpdated(1, {trackingId: "1549958107000"}, 39);
     assert(width_update_checked);
 });
 
@@ -88,17 +90,18 @@ run_test('upload_error', () => {
 
     function test(err, msg, server_response = null, file = {}) {
         setup_test();
-        file.lastModified = 1549958107000;
+        file.trackingId = "1549958107000";
         upload_opts.error(err, server_response, file);
         assert_side_effects(msg);
     }
 
-    var msg_prefix = 'translated: ';
-    var msg_1 = 'File upload is not yet available for your browser.';
-    var msg_2 = 'Unable to upload that many files at once.';
-    var msg_3 = '"foobar.txt" was too large; the maximum file size is 25MiB.';
-    var msg_4 = 'Sorry, the file was too large.';
-    var msg_5 = 'An unknown error occurred.';
+    const msg_prefix = 'translated: ';
+    const msg_1 = 'File upload is not yet available for your browser.';
+    const msg_2 = 'Unable to upload that many files at once.';
+    const msg_3 = '"foobar.txt" was too large; the maximum file size is 25MB.';
+    const msg_4 = 'Sorry, the file was too large.';
+    const msg_5 = 'An unknown error occurred.';
+    const msg_6 = 'File and image uploads have been disabled for this organization.';
 
     test('BrowserNotSupported', msg_prefix + msg_1);
     test('TooManyFiles', msg_prefix + msg_2);
@@ -106,15 +109,20 @@ run_test('upload_error', () => {
     test(413, msg_prefix + msg_4);
     test(400, 'ちょっと…', {msg: 'ちょっと…'});
     test('Do-not-match-any-case', msg_prefix + msg_5);
+
+    // If uploading files has been disabled, then a different error message is
+    // displayed when a user tries to paste or drag a file onto the UI.
+    page_params.max_file_upload_size = 0;
+    test('FileTooLarge', msg_prefix + msg_6, null);
 });
 
 run_test('upload_finish', () => {
     function test(i, response, textbox_val) {
-        var compose_ui_autosize_textarea_checked = false;
-        var compose_actions_start_checked = false;
-        var syntax_to_replace;
-        var syntax_to_replace_with;
-        var file_input_clear = false;
+        let compose_ui_autosize_textarea_checked = false;
+        let compose_actions_start_checked = false;
+        let syntax_to_replace;
+        let syntax_to_replace_with;
+        let file_input_clear = false;
 
         function setup() {
             $("#compose-textarea").val('');
@@ -174,15 +182,15 @@ run_test('upload_finish', () => {
 
         setup();
         upload_opts.uploadFinished(i, {
-            lastModified: 1549958107000,
+            trackingId: "1549958107000",
             name: 'some-file',
         }, response);
-        upload_opts.progressUpdated(1, {lastModified: 1549958107000}, 100);
+        upload_opts.progressUpdated(1, {trackingId: "1549958107000"}, 100);
         assert_side_effects();
     }
 
-    var msg_1 = '[pasted image](https://foo.com/uploads/122456)';
-    var msg_2 = '[foobar.jpeg](https://foo.com/user_uploads/foobar.jpeg)';
+    const msg_1 = '[pasted image](https://foo.com/uploads/122456)';
+    const msg_2 = '[foobar.jpeg](https://foo.com/user_uploads/foobar.jpeg)';
 
     test(-1, {}, '');
     test(-1, {uri: 'https://foo.com/uploads/122456'}, msg_1);

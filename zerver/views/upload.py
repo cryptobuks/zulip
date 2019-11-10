@@ -1,13 +1,12 @@
-# -*- coding: utf-8 -*-
-
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden, \
     HttpResponseNotFound
 from django.shortcuts import redirect
+from django.utils.cache import patch_cache_control
 from django.utils.translation import ugettext as _
 
 from zerver.lib.response import json_success, json_error
 from zerver.lib.upload import upload_message_image_from_request, get_local_file_path, \
-    get_signed_upload_url, check_upload_within_quota
+    get_signed_upload_url, check_upload_within_quota, INLINE_MIME_TYPES
 from zerver.models import UserProfile, validate_attachment_request
 from django.conf import settings
 from sendfile import sendfile
@@ -26,11 +25,12 @@ def serve_local(request: HttpRequest, path_id: str) -> HttpResponse:
     # an attachment (and thus clicking a link to it should download)
     # or like a link (and thus clicking a link to it should display it
     # in a browser tab).  This is controlled by the
-    # Content-Disposition header; `django-sendfile` sends the
+    # Content-Disposition header; `django-sendfile2` sends the
     # attachment-style version of that header if and only if the
     # attachment argument is passed to it.  For attachments,
-    # django-sendfile sets the response['Content-disposition'] like
-    # this: `attachment; filename="b'zulip.txt'"; filename*=UTF-8''zulip.txt`.
+    # django-sendfile2 sets the response['Content-disposition'] like
+    # this: `attachment; filename="zulip.txt"; filename*=UTF-8''zulip.txt`.
+    # The filename* parameter is omitted for ASCII filenames like this one.
     #
     # The "filename" field (used to name the file when downloaded) is
     # unreliable because it doesn't have a well-defined encoding; the
@@ -38,13 +38,13 @@ def serve_local(request: HttpRequest, path_id: str) -> HttpResponse:
     # consistent format (urlquoted).  For more details on filename*
     # and filename, see the below docs:
     # https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition
-    attachment = True
-    file_type = guess_type(local_path)[0]
-    if file_type is not None and (file_type.startswith("image/") or
-                                  file_type == "application/pdf"):
-        attachment = False
+    mimetype, encoding = guess_type(local_path)
+    attachment = mimetype not in INLINE_MIME_TYPES
 
-    return sendfile(request, local_path, attachment=attachment)
+    response = sendfile(request, local_path, attachment=attachment,
+                        mimetype=mimetype, encoding=encoding)
+    patch_cache_control(response, private=True, immutable=True)
+    return response
 
 def serve_file_backend(request: HttpRequest, user_profile: UserProfile,
                        realm_id_str: str, filename: str) -> HttpResponse:
@@ -72,31 +72,6 @@ def upload_file_backend(request: HttpRequest, user_profile: UserProfile) -> Http
         return json_error(_("Uploaded file is larger than the allowed limit of %s MB") % (
             settings.MAX_FILE_UPLOAD_SIZE))
     check_upload_within_quota(user_profile.realm, file_size)
-
-    if not isinstance(user_file.name, str):
-        # It seems that in Python 2 unicode strings containing bytes are
-        # rendered differently than ascii strings containing same bytes.
-        #
-        # Example:
-        # >>> print('\xd3\x92')
-        # Ӓ
-        # >>> print(u'\xd3\x92')
-        # Ó
-        #
-        # This is the cause of the problem as user_file.name variable
-        # is received as a unicode which is converted into unicode
-        # strings containing bytes and is rendered incorrectly.
-        #
-        # Example:
-        # >>> import urllib.parse
-        # >>> name = u'%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D0%B5%D0%B8%CC%86%D1%82%D0%B5.txt'
-        # >>> print(urllib.parse.unquote(name))
-        # ÐÐ´ÑÐ°Ð²ÐµÐ¸ÌÑÐµ  # This is wrong
-        #
-        # >>> name = '%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D0%B5%D0%B8%CC%86%D1%82%D0%B5.txt'
-        # >>> print(urllib.parse.unquote(name))
-        # Здравейте.txt  # This is correct
-        user_file.name = user_file.name.encode('ascii')
 
     uri = upload_message_image_from_request(request, user_file, user_profile)
     return json_success({'uri': uri})

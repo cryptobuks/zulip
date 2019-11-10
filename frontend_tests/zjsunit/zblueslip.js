@@ -1,8 +1,6 @@
-var exports = {};
-
 exports.make_zblueslip = function (opts) {
 
-    var lib = {};
+    const lib = {};
 
     // Apply defaults
     opts = Object.assign({
@@ -70,7 +68,7 @@ exports.make_zblueslip = function (opts) {
             const exact_match_fail = lib.test_data[name].indexOf(message) === -1;
             const string_match_fail = lib.test_data[name].indexOf(message.toString()) === -1;
             if (exact_match_fail && string_match_fail) {
-                var error = Error(`Invalid ${name} message: "${message}".`);
+                const error = Error(`Invalid ${name} message: "${message}".`);
                 error.blueslip = true;
                 throw error;
             }
@@ -81,13 +79,5 @@ exports.make_zblueslip = function (opts) {
         return ex.message;
     };
 
-    lib.wrap_function = (f) => {
-        return (...args) => {
-            return f.apply(this, args);
-        };
-    };
-
     return lib;
 };
-
-module.exports = exports;

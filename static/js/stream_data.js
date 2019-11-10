@@ -1,17 +1,13 @@
-var Dict = require('./dict').Dict;
-
-var stream_data = (function () {
-
-var exports = {};
+const Dict = require('./dict').Dict;
 
 
 // The stream_info variable maps stream names to stream properties objects
 // Call clear_subscriptions() to initialize it.
-var stream_info;
-var subs_by_stream_id;
-var filter_out_inactives = false;
+let stream_info;
+let subs_by_stream_id;
+let filter_out_inactives = false;
 
-var stream_ids_by_name = new Dict({fold_case: true});
+const stream_ids_by_name = new Dict({fold_case: true});
 
 exports.clear_subscriptions = function () {
     stream_info = new Dict({fold_case: true});
@@ -20,8 +16,16 @@ exports.clear_subscriptions = function () {
 
 exports.clear_subscriptions();
 
-exports.set_filter_out_inactives = function (want_filter) {
-    filter_out_inactives = want_filter || false;
+exports.set_filter_out_inactives = function () {
+    if (page_params.demote_inactive_streams ===
+            settings_display.demote_inactive_streams_values.automatic.code) {
+        filter_out_inactives = exports.subscribed_subs().length >= 30;
+    } else if (page_params.demote_inactive_streams ===
+            settings_display.demote_inactive_streams_values.always.code) {
+        filter_out_inactives = true;
+    } else {
+        filter_out_inactives = false;
+    }
 };
 
 // for testing:
@@ -30,7 +34,8 @@ exports.is_filtering_inactives = function () {
 };
 
 exports.is_active = function (sub) {
-    if (!filter_out_inactives) {
+    exports.set_filter_out_inactives();
+    if (!filter_out_inactives || sub.pin_to_top) {
         // If users don't want to filter inactive streams
         // to the bottom, we respect that setting and don't
         // treat any streams as dormant.
@@ -44,7 +49,7 @@ exports.is_active = function (sub) {
 };
 
 exports.rename_sub = function (sub, new_name) {
-    var old_name = sub.name;
+    const old_name = sub.name;
 
     stream_ids_by_name.set(old_name, sub.stream_id);
 
@@ -54,7 +59,7 @@ exports.rename_sub = function (sub, new_name) {
 };
 
 exports.subscribe_myself = function (sub) {
-    var user_id = people.my_current_user_id();
+    const user_id = people.my_current_user_id();
     exports.add_subscriber(sub.name, user_id);
     sub.subscribed = true;
     sub.newly_subscribed = true;
@@ -62,7 +67,7 @@ exports.subscribe_myself = function (sub) {
 
 exports.unsubscribe_myself = function (sub) {
     // Remove user from subscriber's list
-    var user_id = people.my_current_user_id();
+    const user_id = people.my_current_user_id();
     exports.remove_subscriber(sub.name, user_id);
     sub.subscribed = false;
     sub.newly_subscribed = false;
@@ -89,13 +94,13 @@ exports.get_stream_id = function (name) {
     // Note: Only use this function for situations where
     // you are comfortable with a user dealing with an
     // old name of a stream (from prior to a rename).
-    var sub = stream_info.get(name);
+    const sub = stream_info.get(name);
 
     if (sub) {
         return sub.stream_id;
     }
 
-    var stream_id = stream_ids_by_name.get(name);
+    const stream_id = stream_ids_by_name.get(name);
     return stream_id;
 };
 
@@ -104,13 +109,13 @@ exports.get_sub_by_name = function (name) {
     // you are comfortable with a user dealing with an
     // old name of a stream (from prior to a rename).
 
-    var sub = stream_info.get(name);
+    const sub = stream_info.get(name);
 
     if (sub) {
         return sub;
     }
 
-    var stream_id = stream_ids_by_name.get(name);
+    const stream_id = stream_ids_by_name.get(name);
 
     if (!stream_id) {
         return;
@@ -120,7 +125,7 @@ exports.get_sub_by_name = function (name) {
 };
 
 exports.id_to_slug = function (stream_id) {
-    var name = exports.maybe_get_stream_name(stream_id) || 'unknown';
+    let name = exports.maybe_get_stream_name(stream_id) || 'unknown';
 
     // The name part of the URL doesn't really matter, so we try to
     // make it pretty.
@@ -130,7 +135,7 @@ exports.id_to_slug = function (stream_id) {
 };
 
 exports.name_to_slug = function (name) {
-    var stream_id = exports.get_stream_id(name);
+    const stream_id = exports.get_stream_id(name);
 
     if (!stream_id) {
         return name;
@@ -144,10 +149,10 @@ exports.name_to_slug = function (name) {
 };
 
 exports.slug_to_name = function (slug) {
-    var m = /^([\d]+)-/.exec(slug);
+    const m = /^([\d]+)-/.exec(slug);
     if (m) {
-        var stream_id = m[1];
-        var sub = subs_by_stream_id.get(stream_id);
+        const stream_id = m[1];
+        const sub = subs_by_stream_id.get(stream_id);
         if (sub) {
             return sub.name;
         }
@@ -161,7 +166,7 @@ exports.slug_to_name = function (slug) {
 
 
 exports.delete_sub = function (stream_id) {
-    var sub = subs_by_stream_id.get(stream_id);
+    const sub = subs_by_stream_id.get(stream_id);
     if (!sub) {
         blueslip.warn('Failed to delete stream ' + stream_id);
         return;
@@ -171,11 +176,11 @@ exports.delete_sub = function (stream_id) {
 };
 
 exports.get_non_default_stream_names = function () {
-    var subs = stream_info.values();
+    let subs = stream_info.values();
     subs = _.reject(subs, function (sub) {
         return exports.is_default_stream_id(sub.stream_id) || !sub.subscribed && sub.invite_only;
     });
-    var names = _.pluck(subs, 'name');
+    const names = _.pluck(subs, 'name');
     return names;
 };
 
@@ -187,12 +192,19 @@ exports.get_updated_unsorted_subs = function () {
     // This function is expensive in terms of calculating
     // some values (particularly stream counts) but avoids
     // prematurely sorting subs.
-    var all_subs = stream_info.values();
+    let all_subs = stream_info.values();
 
     // Add in admin options and stream counts.
     _.each(all_subs, function (sub) {
         exports.update_calculated_fields(sub);
     });
+
+    // We don't display unsubscribed streams to guest users.
+    if (page_params.is_guest) {
+        all_subs = _.reject(all_subs, function (sub) {
+            return !sub.subscribed;
+        });
+    }
 
     return all_subs;
 };
@@ -210,20 +222,20 @@ exports.subscribed_streams = function () {
 };
 
 exports.get_invite_stream_data = function () {
-    var filter_stream_data = function (sub) {
+    const filter_stream_data = function (sub) {
         return {
             name: sub.name,
             stream_id: sub.stream_id,
             invite_only: sub.invite_only,
-            default_stream: stream_data.get_default_status(sub.name),
+            default_stream: exports.get_default_status(sub.name),
         };
     };
-    var invite_stream_data = _.map(stream_data.subscribed_subs(), filter_stream_data);
-    var default_stream_data = _.map(page_params.realm_default_streams, filter_stream_data);
+    const invite_stream_data = _.map(exports.subscribed_subs(), filter_stream_data);
+    const default_stream_data = _.map(page_params.realm_default_streams, filter_stream_data);
 
     // Since, union doesn't work on array of objects we are using filter
-    var is_included = {};
-    var streams = _.filter(default_stream_data.concat(invite_stream_data), function (sub) {
+    const is_included = {};
+    const streams = _.filter(default_stream_data.concat(invite_stream_data), function (sub) {
         if (is_included[sub.name]) {
             return false;
         }
@@ -234,8 +246,8 @@ exports.get_invite_stream_data = function () {
 };
 
 exports.invite_streams = function () {
-    var invite_list = exports.subscribed_streams();
-    var default_list = _.pluck(page_params.realm_default_streams, 'name');
+    const invite_list = exports.subscribed_streams();
+    const default_list = _.pluck(page_params.realm_default_streams, 'name');
     return _.union(invite_list, default_list);
 };
 
@@ -244,7 +256,7 @@ exports.get_colors = function () {
 };
 
 exports.update_subscribers_count = function (sub) {
-    var count = sub.subscribers.num_items();
+    const count = sub.subscribers.num_items();
     sub.subscriber_count = count;
 };
 
@@ -253,7 +265,7 @@ exports.update_stream_email_address = function (sub, email) {
 };
 
 exports.get_subscriber_count = function (stream_name) {
-    var sub = exports.get_sub_by_name(stream_name);
+    const sub = exports.get_sub_by_name(stream_name);
     if (sub === undefined) {
         blueslip.warn('We got a get_subscriber_count count call for a non-existent stream.');
         return;
@@ -263,6 +275,33 @@ exports.get_subscriber_count = function (stream_name) {
     }
     return sub.subscribers.num_items();
 };
+
+exports.update_stream_announcement_only = function (sub, is_announcement_only) {
+    sub.is_announcement_only = is_announcement_only;
+};
+
+exports.update_stream_privacy = function (sub, values) {
+    sub.invite_only = values.invite_only;
+    sub.history_public_to_subscribers = values.history_public_to_subscribers;
+};
+
+exports.receives_notifications = function (stream_name, notification_name) {
+    const sub = exports.get_sub(stream_name);
+    if (sub === undefined) {
+        return false;
+    }
+    if (sub[notification_name] !== null) {
+        return sub[notification_name];
+    }
+    return page_params["enable_stream_" + notification_name];
+};
+
+const stream_notification_settings = [
+    "desktop_notifications",
+    "audible_notifications",
+    "push_notifications",
+    "email_notifications",
+];
 
 exports.update_calculated_fields = function (sub) {
     sub.is_admin = page_params.is_admin;
@@ -288,17 +327,22 @@ exports.update_calculated_fields = function (sub) {
         sub.rendered_description = sub.rendered_description.replace('<p>', '').replace('</p>', '');
     }
     exports.update_subscribers_count(sub);
+
+    // Apply the defaults for our notification settings for rendering.
+    _.each(stream_notification_settings, function (setting) {
+        sub[setting + "_display"] = exports.receives_notifications(sub.name, setting);
+    });
 };
 
 exports.all_subscribed_streams_are_in_home_view = function () {
     return _.every(exports.subscribed_subs(), function (sub) {
-        return sub.in_home_view;
+        return !sub.is_muted;
     });
 };
 
 exports.home_view_stream_names = function () {
-    var home_view_subs = _.filter(exports.subscribed_subs(), function (sub) {
-        return sub.in_home_view;
+    const home_view_subs = _.filter(exports.subscribed_subs(), function (sub) {
+        return !sub.is_muted;
     });
     return _.map(home_view_subs, function (sub) {
         return sub.name;
@@ -310,40 +354,48 @@ exports.canonicalized_name = function (stream_name) {
 };
 
 exports.get_color = function (stream_name) {
-    var sub = exports.get_sub(stream_name);
+    const sub = exports.get_sub(stream_name);
     if (sub === undefined) {
         return stream_color.default_color;
     }
     return sub.color;
 };
 
-exports.in_home_view = function (stream_id) {
-    var sub = exports.get_sub_by_id(stream_id);
-    return sub !== undefined && sub.in_home_view;
+exports.is_muted = function (stream_id) {
+    const sub = exports.get_sub_by_id(stream_id);
+    // Return true for undefined streams
+    if (sub === undefined) {
+        return true;
+    }
+    return sub.is_muted;
 };
 
-exports.name_in_home_view = function (stream_name) {
-    var sub = exports.get_sub(stream_name);
-    return sub !== undefined && sub.in_home_view;
+exports.is_stream_muted_by_name = function (stream_name) {
+    const sub = exports.get_sub(stream_name);
+    // Return true for undefined streams
+    if (sub === undefined) {
+        return true;
+    }
+    return sub.is_muted;
 };
 
-exports.notifications_in_home_view = function () {
+exports.is_notifications_stream_muted = function () {
     // TODO: add page_params.notifications_stream_id
-    return exports.name_in_home_view(page_params.notifications_stream);
+    return exports.is_stream_muted_by_name(page_params.notifications_stream);
 };
 
 exports.is_subscribed = function (stream_name) {
-    var sub = exports.get_sub(stream_name);
+    const sub = exports.get_sub(stream_name);
     return sub !== undefined && sub.subscribed;
 };
 
 exports.id_is_subscribed = function (stream_id) {
-    var sub = subs_by_stream_id.get(stream_id);
+    const sub = subs_by_stream_id.get(stream_id);
     return sub !== undefined && sub.subscribed;
 };
 
 exports.get_invite_only = function (stream_name) {
-    var sub = exports.get_sub(stream_name);
+    const sub = exports.get_sub(stream_name);
     if (sub === undefined) {
         return false;
     }
@@ -351,7 +403,7 @@ exports.get_invite_only = function (stream_name) {
 };
 
 exports.get_announcement_only = function (stream_name) {
-    var sub = exports.get_sub(stream_name);
+    const sub = exports.get_sub(stream_name);
     if (sub === undefined) {
         return false;
     }
@@ -387,11 +439,11 @@ exports.all_topics_in_cache = function (sub) {
     // message ID in the stream; if it's older, we're good, otherwise,
     // we might be missing the oldest topics in this stream in our
     // cache.
-    var first_cached_message = message_list.all.first();
+    const first_cached_message = message_list.all.first();
     return first_cached_message.id <= sub.first_message_id;
 };
 
-var default_stream_ids = new Dict();
+const default_stream_ids = new Dict();
 
 exports.set_realm_default_streams = function (realm_default_streams) {
     page_params.realm_default_streams = realm_default_streams;
@@ -403,13 +455,13 @@ exports.set_realm_default_streams = function (realm_default_streams) {
 };
 
 exports.get_default_stream_names = function () {
-    var streams = _.map(default_stream_ids.keys(), exports.get_sub_by_id);
-    var default_stream_names = _.pluck(streams, 'name');
+    const streams = _.map(default_stream_ids.keys(), exports.get_sub_by_id);
+    const default_stream_names = _.pluck(streams, 'name');
     return default_stream_names;
 };
 
 exports.get_default_status = function (stream_name) {
-    var stream_id = exports.get_stream_id(stream_name);
+    const stream_id = exports.get_stream_id(stream_name);
 
     if (!stream_id) {
         return false;
@@ -431,7 +483,7 @@ exports.get_name = function (stream_name) {
     //
     // This function will also do the right thing if we have
     // an old stream name in memory for a recently renamed stream.
-    var sub = exports.get_sub_by_name(stream_name);
+    const sub = exports.get_sub_by_name(stream_name);
     if (sub === undefined) {
         return stream_name;
     }
@@ -442,7 +494,7 @@ exports.maybe_get_stream_name = function (stream_id) {
     if (!stream_id) {
         return;
     }
-    var stream = exports.get_sub_by_id(stream_id);
+    const stream = exports.get_sub_by_id(stream_id);
 
     if (!stream) {
         return;
@@ -456,12 +508,12 @@ exports.set_subscribers = function (sub, user_ids) {
 };
 
 exports.add_subscriber = function (stream_name, user_id) {
-    var sub = exports.get_sub(stream_name);
+    const sub = exports.get_sub(stream_name);
     if (typeof sub === 'undefined') {
         blueslip.warn("We got an add_subscriber call for a non-existent stream.");
         return false;
     }
-    var person = people.get_person_from_user_id(user_id);
+    const person = people.get_person_from_user_id(user_id);
     if (person === undefined) {
         blueslip.error("We tried to add invalid subscriber: " + user_id);
         return false;
@@ -472,7 +524,7 @@ exports.add_subscriber = function (stream_name, user_id) {
 };
 
 exports.remove_subscriber = function (stream_name, user_id) {
-    var sub = exports.get_sub(stream_name);
+    const sub = exports.get_sub(stream_name);
     if (typeof sub === 'undefined') {
         blueslip.warn("We got a remove_subscriber call for a non-existent stream " + stream_name);
         return false;
@@ -488,7 +540,7 @@ exports.remove_subscriber = function (stream_name, user_id) {
 };
 
 exports.is_user_subscribed = function (stream_name, user_id) {
-    var sub = exports.get_sub(stream_name);
+    const sub = exports.get_sub(stream_name);
     if (typeof sub === 'undefined' || !sub.can_access_subscribers) {
         // If we don't know about the stream, or we ourselves cannot access subscriber list,
         // so we return undefined (treated as falsy if not explicitly handled).
@@ -506,7 +558,7 @@ exports.is_user_subscribed = function (stream_name, user_id) {
 exports.create_streams = function (streams) {
     _.each(streams, function (stream) {
         // We handle subscriber stuff in other events.
-        var attrs = _.defaults(stream, {
+        const attrs = _.defaults(stream, {
             subscribers: [],
             subscribed: false,
         });
@@ -515,7 +567,7 @@ exports.create_streams = function (streams) {
 };
 
 exports.create_sub_from_server_data = function (stream_name, attrs) {
-    var sub = exports.get_sub(stream_name);
+    let sub = exports.get_sub(stream_name);
     if (sub !== undefined) {
         // We've already created this subscription, no need to continue.
         return sub;
@@ -534,7 +586,7 @@ exports.create_sub_from_server_data = function (stream_name, attrs) {
     // a copy of the object with `_.omit(attrs, 'subscribers')`, but `_.omit` is
     // slow enough to show up in timings when you have 1000s of streams.
 
-    var subscriber_user_ids = attrs.subscribers;
+    const subscriber_user_ids = attrs.subscribers;
 
     delete attrs.subscribers;
 
@@ -543,10 +595,10 @@ exports.create_sub_from_server_data = function (stream_name, attrs) {
         render_subscribers: !page_params.realm_is_zephyr_mirror_realm || attrs.invite_only === true,
         subscribed: true,
         newly_subscribed: false,
-        in_home_view: true,
+        is_muted: false,
         invite_only: false,
         desktop_notifications: page_params.enable_stream_desktop_notifications,
-        audible_notifications: page_params.enable_stream_sounds,
+        audible_notifications: page_params.enable_stream_audible_notifications,
         push_notifications: page_params.enable_stream_push_notifications,
         email_notifications: page_params.enable_stream_email_notifications,
         description: '',
@@ -567,22 +619,6 @@ exports.create_sub_from_server_data = function (stream_name, attrs) {
     return sub;
 };
 
-exports.receives_desktop_notifications = function (stream_name) {
-    var sub = exports.get_sub(stream_name);
-    if (sub === undefined) {
-        return false;
-    }
-    return sub.desktop_notifications;
-};
-
-exports.receives_audible_notifications = function (stream_name) {
-    var sub = exports.get_sub(stream_name);
-    if (sub === undefined) {
-        return false;
-    }
-    return sub.audible_notifications;
-};
-
 exports.get_streams_for_settings_page = function () {
     // TODO: This function is only used for copy-from-stream, so
     //       the current name is slightly misleading now, plus
@@ -590,8 +626,8 @@ exports.get_streams_for_settings_page = function () {
     //       for that.  Also we may be revisiting that UI.
 
     // Build up our list of subscribed streams from the data we already have.
-    var subscribed_rows = exports.subscribed_subs();
-    var unsubscribed_rows = exports.unsubscribed_subs();
+    const subscribed_rows = exports.subscribed_subs();
+    const unsubscribed_rows = exports.unsubscribed_subs();
 
     // Sort and combine all our streams.
     function by_name(a, b) {
@@ -599,7 +635,7 @@ exports.get_streams_for_settings_page = function () {
     }
     subscribed_rows.sort(by_name);
     unsubscribed_rows.sort(by_name);
-    var all_subs = unsubscribed_rows.concat(subscribed_rows);
+    const all_subs = unsubscribed_rows.concat(subscribed_rows);
 
     // Add in admin options and stream counts.
     _.each(all_subs, function (sub) {
@@ -614,7 +650,7 @@ exports.sort_for_stream_settings = function (stream_ids) {
     //       which uses Intl.Collator() when possible.
 
     function name(stream_id) {
-        var sub = stream_data.get_sub_by_id(stream_id);
+        const sub = exports.get_sub_by_id(stream_id);
         if (!sub) {
             return '';
         }
@@ -622,8 +658,8 @@ exports.sort_for_stream_settings = function (stream_ids) {
     }
 
     function by_stream_name(id_a, id_b) {
-        var stream_a_name = name(id_a);
-        var stream_b_name = name(id_b);
+        const stream_a_name = name(id_a);
+        const stream_b_name = name(id_b);
         return String.prototype.localeCompare.call(stream_a_name, stream_b_name);
     }
 
@@ -636,7 +672,7 @@ exports.get_streams_for_admin = function () {
         return util.strcmp(a.name, b.name);
     }
 
-    var subs = stream_info.values();
+    const subs = stream_info.values();
 
     subs.sort(by_name);
 
@@ -648,7 +684,7 @@ exports.initialize = function () {
 
     function populate_subscriptions(subs, subscribed, previously_subscribed) {
         subs.forEach(function (sub) {
-            var stream_name = sub.name;
+            const stream_name = sub.name;
             sub.subscribed = subscribed;
             sub.previously_subscribed = previously_subscribed;
 
@@ -665,7 +701,7 @@ exports.initialize = function () {
     // Migrate the notifications stream from the new API structure to
     // what the frontend expects.
     if (page_params.realm_notifications_stream_id !== -1) {
-        var notifications_stream_obj =
+        const notifications_stream_obj =
             exports.get_sub_by_id(page_params.realm_notifications_stream_id);
         if (notifications_stream_obj) {
             // This happens when the notifications stream is a private
@@ -678,8 +714,7 @@ exports.initialize = function () {
         page_params.notifications_stream = "";
     }
 
-    var has_many_streams = exports.subscribed_subs().length >= 30;
-    exports.set_filter_out_inactives(has_many_streams);
+    exports.set_filter_out_inactives();
 
     // Garbage collect data structures that were only used for initialization.
     delete page_params.subscriptions;
@@ -697,10 +732,4 @@ exports.remove_default_stream = function (stream_id) {
     default_stream_ids.del(stream_id);
 };
 
-return exports;
-
-}());
-if (typeof module !== 'undefined') {
-    module.exports = stream_data;
-}
-window.stream_data = stream_data;
+window.stream_data = exports;

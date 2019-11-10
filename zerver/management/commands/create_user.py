@@ -1,4 +1,3 @@
-
 import argparse
 import sys
 from typing import Any
@@ -77,15 +76,16 @@ parameters, or specify no parameters for interactive user creation.""")
                 full_name = input("Full name: ")
 
         try:
-            if 'password' in options:
+            if options['password_file']:
+                with open(options['password_file'], 'r') as f:
+                    pw = f.read()
+            elif options['password']:
                 pw = options['password']
-            if 'password_file' in options:
-                pw = open(options['password_file'], 'r').read()
             else:
                 user_initial_password = initial_password(email)
                 if user_initial_password is None:
                     raise CommandError("Password is unusable.")
-                pw = user_initial_password.encode()
+                pw = user_initial_password
             do_create_user(email, pw, realm, full_name, email_to_username(email))
         except IntegrityError:
             raise CommandError("User already exists.")

@@ -67,6 +67,7 @@
 * [Start a new topic](/help/start-a-new-topic)
 * [Change the topic of a message](/help/change-the-topic-of-a-message)
 * [Rename a topic](/help/rename-a-topic)
+* [Manage inactive streams](/help/manage-inactive-streams)
 
 ## Notifications
 * [Stream notifications](/help/stream-notifications)
@@ -88,9 +89,11 @@
 * [Enable emoticon translations](/help/enable-emoticon-translations)
 * [Manage your uploaded files](/help/manage-your-uploaded-files)
 * [View emoji as text](/help/view-emoji-as-text)
+* [Enable full width display](/help/enable-full-width-display)
 * [Change your timezone](/help/change-your-timezone)
 * [Display the buddy list on narrow screens](/help/move-the-users-list-to-the-left-sidebar)
 * [View organization statistics](/help/analytics)
+* [Linking to Zulip](/help/linking-to-zulip)
 * [Connect through a proxy](/help/connect-through-a-proxy)
 * [Add a custom certificate](/help/custom-certificates)
 
@@ -103,7 +106,6 @@
 ## Organization basics
 * [Review your organization's settings](/help/review-your-organization-settings)
 * [Create your organization profile](/help/create-your-organization-profile)
-* [Link to your Zulip from the web](/help/join-zulip-chat-badge)
 * [Import from HipChat/Stride](/help/import-from-hipchat)
 * [Import from Mattermost](/help/import-from-mattermost)
 * [Import from Slack](/help/import-from-slack)
@@ -116,6 +118,7 @@
 
 ## Organization settings
 * [Restrict stream creation](/help/configure-who-can-create-streams)
+* [Restrict stream invitation](/help/configure-who-can-invite-to-streams)
 * [Change who can add custom emoji](/help/only-allow-admins-to-add-emoji)
 * [Block image and link previews](/help/allow-image-link-previews)
 * [Restrict name and email changes](/help/restrict-name-and-email-changes)
@@ -135,9 +138,11 @@
 * [Allow anyone to join](/help/allow-anyone-to-join-without-an-invitation)
 * [Add custom profile fields](/help/add-custom-profile-fields)
 * [User groups](/help/user-groups)
+* [Restrict visibility of email addresses](/help/restrict-visibility-of-email-addresses)
 * [Deactivate or reactivate a user](/help/deactivate-or-reactivate-a-user)
 * [Deactivate or reactivate a bot](/help/deactivate-or-reactivate-a-bot)
 * [Restrict bot creation](/help/restrict-bot-creation)
+* [Restrict permissions of new members](/help/restrict-permissions-of-new-members)
 * [Change a user's role](/help/change-a-users-role)
 * [Change a user's name](/help/change-a-users-name)
 * [View all bots in your organization](/help/view-all-bots-in-your-organization)

@@ -1,3 +1,8 @@
+var render_bookend = require('../templates/bookend.hbs');
+var render_message_group = require('../templates/message_group.hbs');
+var render_recipient_row = require('../templates/recipient_row.hbs');
+var render_single_message = require('../templates/single_message.hbs');
+
 function MessageListView(list, table_name, collapse_messages) {
     this.list = list;
     this.collapse_messages = collapse_messages;
@@ -13,8 +18,6 @@ function MessageListView(list, table_name, collapse_messages) {
     this._render_win_start = 0;
     this._render_win_end = 0;
 }
-
-(function () {
 
 function get_user_id_for_mention_button(elem) {
     var user_id = $(elem).attr('data-user-id');
@@ -191,14 +194,31 @@ MessageListView.prototype = {
     // trigger a re-render
     _RENDER_THRESHOLD: 50,
 
-    _add_msg_timestring: function (message_container) {
+    _get_msg_timestring: function (message_container) {
         if (message_container.msg.last_edit_timestamp !== undefined) {
-            // Add or update the last_edit_timestr
             var last_edit_time = new XDate(message_container.msg.last_edit_timestamp * 1000);
             var today = new XDate();
-            message_container.last_edit_timestr =
-                timerender.render_date(last_edit_time, undefined, today)[0].textContent
-                + " at " + timerender.stringify_time(last_edit_time);
+            return timerender.render_date(last_edit_time, undefined, today)[0].textContent +
+                " at " + timerender.stringify_time(last_edit_time);
+        }
+    },
+
+    _add_msg_edited_vars: function (message_container) {
+        // This adds variables to message_container object which calculate bools for
+        // checking position of "(EDITED)" label as well as the edited timestring
+        // The bools can be defined only when the message is edited
+        // (or when the `last_edit_timestr` is defined). The bools are:
+        //   * `edited_in_left_col`      -- when label appears in left column.
+        //   * `edited_alongside_sender` -- when label appears alongside sender info.
+        //   * `edited_status_msg`       -- when label appears for a "/me" message.
+        var last_edit_timestr = this._get_msg_timestring(message_container);
+        var include_sender = message_container.include_sender;
+        var status_message = Boolean(message_container.status_message);
+        if (last_edit_timestr !== undefined) {
+            message_container.last_edit_timestr = last_edit_timestr;
+            message_container.edited_in_left_col = !include_sender;
+            message_container.edited_alongside_sender = include_sender && !status_message;
+            message_container.edited_status_msg = include_sender && status_message;
         }
     },
 
@@ -316,8 +336,6 @@ MessageListView.prototype = {
             message_container.sender_is_bot = people.sender_is_bot(message_container.msg);
             message_container.sender_is_guest = people.sender_is_guest(message_container.msg);
 
-            self._add_msg_timestring(message_container);
-
             message_container.small_avatar_url = people.small_avatar_url(message_container.msg);
             if (message_container.msg.stream) {
                 message_container.background_color =
@@ -326,6 +344,8 @@ MessageListView.prototype = {
 
             message_container.contains_mention = message_container.msg.mentioned;
             self._maybe_format_me_message(message_container);
+            // Once all other variables are updated
+            self._add_msg_edited_vars(message_container);
 
             prev = message_container;
         });
@@ -563,6 +583,17 @@ MessageListView.prototype = {
             }
         });
 
+        content.find('a.stream-topic').each(function () {
+            var stream_id = $(this).attr('data-stream-id');
+            if (stream_id && !$(this).find(".highlight").length) {
+                // Display the current name for stream if it is not
+                // being displayed in search highlight.
+                var text = $(this).text();
+                var topic = text.split('>', 2)[1];
+                $(this).text("#" + stream_data.maybe_get_stream_name(stream_id) + ' > ' + topic);
+            }
+        });
+
         // Display emoji (including realm emoji) as text if
         // page_params.emojiset is 'text'.
         if (page_params.emojiset === 'text') {
@@ -587,7 +618,7 @@ MessageListView.prototype = {
         var msg_to_render = _.extend(message_container, {
             table_name: this.table_name,
         });
-        return templates.render('single_message', msg_to_render);
+        return render_single_message(msg_to_render);
     },
 
     _render_group: function (opts) {
@@ -595,7 +626,7 @@ MessageListView.prototype = {
         var use_match_properties = opts.use_match_properties;
         var table_name = opts.table_name;
 
-        return $(templates.render('message_group', {
+        return $(render_message_group({
             message_groups: message_groups,
             use_match_properties: use_match_properties,
             table_name: table_name,
@@ -618,7 +649,6 @@ MessageListView.prototype = {
         var table_name = self.table_name;
         var table = rows.get_table(table_name);
         var orig_scrolltop_offset;
-        var message_containers;
 
         // If we start with the message feed scrolled up (i.e.
         // the bottom message is not visible), then we will respect
@@ -630,7 +660,7 @@ MessageListView.prototype = {
         // all messages lists. To prevent having both list views overwriting
         // each others data we will make a new message object to add data to
         // for rendering.
-        message_containers = _.map(messages, function (message) {
+        const message_containers = _.map(messages, function (message) {
             if (message.starred) {
                 message.starred_status = i18n.t("Unstar");
             } else {
@@ -736,7 +766,7 @@ MessageListView.prototype = {
 
         // Insert new messages in to the last message group
         if (message_actions.append_messages.length > 0) {
-            last_message_row = table.find('.message_row:last').expectOne();
+            last_message_row = table.find('.message_row').last().expectOne();
             last_group_row = rows.get_message_recipient_row(last_message_row);
             dom_messages = $(_.map(message_actions.append_messages, function (message_container) {
                 return self._get_message_template(message_container);
@@ -922,7 +952,7 @@ MessageListView.prototype = {
             return false;
         }
 
-        if (!activity.has_focus) {
+        if (!activity.client_is_active) {
             // Don't autoscroll if the window hasn't had focus
             // recently.  This in intended to help protect us from
             // auto-scrolling downwards when the window is in the
@@ -983,7 +1013,8 @@ MessageListView.prototype = {
             // compose box.
             var compose_textarea_default_height = 42;
             var compose_textarea_current_height = $("#compose-textarea").height();
-            var expected_change = compose_textarea_current_height - compose_textarea_default_height;
+            var expected_change =
+                compose_textarea_current_height - compose_textarea_default_height;
             var expected_offset = offset - expected_change;
             need_user_to_scroll = expected_offset > scroll_amount;
         }
@@ -1051,7 +1082,7 @@ MessageListView.prototype = {
         return true;
     },
 
-    rerender_preserving_scrolltop: function () {
+    rerender_preserving_scrolltop: function (discard_rendering_state) {
         // old_offset is the number of pixels between the top of the
         // viewable window and the selected message
         var old_offset;
@@ -1059,6 +1090,13 @@ MessageListView.prototype = {
         var selected_in_view = selected_row.length > 0;
         if (selected_in_view) {
             old_offset = selected_row.offset().top;
+        }
+        if (discard_rendering_state) {
+            // If we know that the existing render is invalid way
+            // (typically because messages appear out-of-order), then
+            // we discard the message_list rendering state entirely.
+            this.clear_rendering_state(true);
+            this.update_render_window(this.list.selected_idx(), false);
         }
         return this.rerender_with_target_scrolltop(selected_row, old_offset);
     },
@@ -1138,7 +1176,7 @@ MessageListView.prototype = {
         // rerendering rather than looking up the original version.
         populate_group_from_message_container(group, group.message_containers[0]);
 
-        var rendered_recipient_row = $(templates.render('recipient_row', group));
+        var rendered_recipient_row = $(render_recipient_row(group));
 
         header.replaceWith(rendered_recipient_row);
     },
@@ -1148,8 +1186,8 @@ MessageListView.prototype = {
         var was_selected = this.list.selected_message() === message_container.msg;
 
         // Re-render just this one message
-        this._add_msg_timestring(message_container);
         this._maybe_format_me_message(message_container);
+        this._add_msg_edited_vars(message_container);
 
         // Make sure the right thing happens if the message was edited to mention us.
         message_container.contains_mention = message_container.msg.mentioned;
@@ -1238,13 +1276,6 @@ MessageListView.prototype = {
         this.maybe_rerender();
     },
 
-    rerender_the_whole_thing: function () {
-        // TODO: Figure out if we can unify this with this.list.rerender().
-        this.clear_rendering_state(true);
-        this.update_render_window(this.list.selected_idx(), false);
-        this.render(this.list.all_messages().slice(this._render_win_start, this._render_win_end), 'bottom');
-    },
-
     clear_table: function () {
         // We do not want to call .empty() because that also clears
         // jQuery data.  This does mean, however, that we need to be
@@ -1273,7 +1304,7 @@ MessageListView.prototype = {
     },
 
     render_trailing_bookend: function (trailing_bookend_content, subscribed, show_button) {
-        var rendered_trailing_bookend = $(templates.render('bookend', {
+        var rendered_trailing_bookend = $(render_bookend({
             bookend_content: trailing_bookend_content,
             trailing: show_button,
             subscribed: subscribed,
@@ -1324,9 +1355,5 @@ MessageListView.prototype = {
     },
 };
 
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = MessageListView;
-}
+module.exports = MessageListView;
 window.MessageListView = MessageListView;

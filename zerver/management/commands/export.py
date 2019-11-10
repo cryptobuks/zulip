@@ -1,19 +1,13 @@
-
 import os
-import shutil
-import subprocess
-import sys
 import tempfile
 from argparse import ArgumentParser
 from typing import Any
 
-from django.conf import settings
 from django.core.management.base import CommandError
 
-from zerver.lib.export import do_export_realm, \
-    do_write_stats_file_for_realm_export
 from zerver.lib.management import ZulipBaseCommand
-from zerver.lib.utils import generate_random_token
+from zerver.lib.export import export_realm_wrapper
+from zerver.models import Message, Reaction
 
 class Command(ZulipBaseCommand):
     help = """Exports all data from a Zulip realm
@@ -97,9 +91,18 @@ class Command(ZulipBaseCommand):
         parser.add_argument('--public-only',
                             action="store_true",
                             help='Export only public stream messages and associated attachments')
-        parser.add_argument('--upload-to-s3',
+        parser.add_argument('--consent-message-id',
+                            dest="consent_message_id",
+                            action="store",
+                            default=None,
+                            type=int,
+                            help='ID of the message advertising users to react with thumbs up')
+        parser.add_argument('--upload',
                             action="store_true",
-                            help="Whether to upload resulting tarball to s3")
+                            help="Whether to upload resulting tarball to s3 or LOCAL_UPLOADS_DIR")
+        parser.add_argument('--delete-after-upload',
+                            action="store_true",
+                            help='Automatically delete the local tarball after a successful export')
         self.add_realm_args(parser, True)
 
     def handle(self, *args: Any, **options: Any) -> None:
@@ -107,50 +110,66 @@ class Command(ZulipBaseCommand):
         assert realm is not None  # Should be ensured by parser
 
         output_dir = options["output_dir"]
+        public_only = options["public_only"]
+        consent_message_id = options["consent_message_id"]
+
         if output_dir is None:
             output_dir = tempfile.mkdtemp(prefix="zulip-export-")
         else:
             output_dir = os.path.realpath(os.path.expanduser(output_dir))
-        if os.path.exists(output_dir):
-            shutil.rmtree(output_dir)
-        os.makedirs(output_dir)
-        print("Exporting realm %s" % (realm.string_id,))
+            if os.path.exists(output_dir):
+                if os.listdir(output_dir):
+                    raise CommandError(
+                        "Refusing to overwrite nonempty directory: %s. Aborting..."
+                        % (output_dir,)
+                    )
+            else:
+                os.makedirs(output_dir)
+
+        tarball_path = output_dir.rstrip("/") + ".tar.gz"
+        try:
+            os.close(os.open(tarball_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666))
+        except FileExistsError:
+            raise CommandError("Refusing to overwrite existing tarball: %s. Aborting..." % (tarball_path,))
+
+        print("\033[94mExporting realm\033[0m: %s" % (realm.string_id,))
+
         num_threads = int(options['threads'])
         if num_threads < 1:
             raise CommandError('You must have at least one thread.')
 
-        do_export_realm(realm, output_dir, threads=num_threads, public_only=options["public_only"])
-        print("Finished exporting to %s; tarring" % (output_dir,))
+        if public_only and consent_message_id is not None:
+            raise CommandError('Please pass either --public-only or --consent-message-id')
 
-        do_write_stats_file_for_realm_export(output_dir)
+        if consent_message_id is not None:
+            try:
+                message = Message.objects.get(id=consent_message_id)
+            except Message.DoesNotExist:
+                raise CommandError("Message with given ID does not exist. Aborting...")
 
-        tarball_path = output_dir.rstrip('/') + '.tar.gz'
-        os.chdir(os.path.dirname(output_dir))
-        subprocess.check_call(["tar", "-czf", tarball_path, os.path.basename(output_dir)])
-        print("Tarball written to %s" % (tarball_path,))
+            if message.last_edit_time is not None:
+                raise CommandError("Message was edited. Aborting...")
 
-        if not options["upload_to_s3"]:
-            return
+            # Since the message might have been sent by
+            # Notification Bot, we can't trivially check the realm of
+            # the message through message.sender.realm.  So instead we
+            # check the realm of the people who reacted to the message
+            # (who must all be in the message's realm).
+            reactions = Reaction.objects.filter(message=message,
+                                                # outbox = 1f4e4
+                                                emoji_code="1f4e4",
+                                                reaction_type="unicode_emoji")
+            for reaction in reactions:
+                if reaction.user_profile.realm != realm:
+                    raise CommandError("Users from a different realm reacted to message. Aborting...")
 
-        def percent_callback(complete: Any, total: Any) -> None:
-            sys.stdout.write('.')
-            sys.stdout.flush()
+            print("\n\033[94mMessage content:\033[0m\n{}\n".format(message.content))
 
-        if settings.LOCAL_UPLOADS_DIR is not None:
-            raise CommandError("S3 backend must be configured to upload to S3")
+            print("\033[94mNumber of users that reacted outbox:\033[0m {}\n".format(len(reactions)))
 
-        print("Uploading export tarball to S3")
-
-        from zerver.lib.upload import S3Connection, get_bucket, Key
-        conn = S3Connection(settings.S3_KEY, settings.S3_SECRET_KEY)
-        # We use the avatar bucket, because it's world-readable.
-        bucket = get_bucket(conn, settings.S3_AVATAR_BUCKET)
-        key = Key(bucket)
-        key.key = os.path.join("exports", generate_random_token(32), os.path.basename(tarball_path))
-        key.set_contents_from_filename(tarball_path, cb=percent_callback, num_cb=40)
-
-        public_url = 'https://{bucket}.{host}/{key}'.format(
-            host=conn.server_name(),
-            bucket=bucket.name,
-            key=key.key)
-        print("Uploaded to %s" % (public_url,))
+        # Allows us to trigger exports separately from command line argument parsing
+        export_realm_wrapper(realm=realm, output_dir=output_dir,
+                             threads=num_threads, upload=options['upload'],
+                             public_only=public_only,
+                             delete_after_upload=options["delete_after_upload"],
+                             consent_message_id=consent_message_id)

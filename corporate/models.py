@@ -35,7 +35,7 @@ class CustomerPlan(models.Model):
     MONTHLY = 2
     billing_schedule = models.SmallIntegerField()  # type: int
 
-    next_invoice_date = models.DateTimeField(db_index=True)  # type: datetime.datetime
+    next_invoice_date = models.DateTimeField(db_index=True, null=True)  # type: Optional[datetime.datetime]
     invoiced_through = models.ForeignKey(
         'LicenseLedger', null=True, on_delete=CASCADE, related_name='+')  # type: Optional[LicenseLedger]
     DONE = 1
@@ -48,15 +48,19 @@ class CustomerPlan(models.Model):
     tier = models.SmallIntegerField()  # type: int
 
     ACTIVE = 1
-    ENDED = 2
-    NEVER_STARTED = 3
-    # You can only have 1 active subscription at a time
+    DOWNGRADE_AT_END_OF_CYCLE = 2
+    # "Live" plans should have a value < LIVE_STATUS_THRESHOLD.
+    # There should be at most one live plan per customer.
+    LIVE_STATUS_THRESHOLD = 10
+    ENDED = 11
+    NEVER_STARTED = 12
     status = models.SmallIntegerField(default=ACTIVE)  # type: int
 
     # TODO maybe override setattr to ensure billing_cycle_anchor, etc are immutable
 
-def get_active_plan(customer: Customer) -> Optional[CustomerPlan]:
-    return CustomerPlan.objects.filter(customer=customer, status=CustomerPlan.ACTIVE).first()
+def get_current_plan(customer: Customer) -> Optional[CustomerPlan]:
+    return CustomerPlan.objects.filter(
+        customer=customer, status__lt=CustomerPlan.LIVE_STATUS_THRESHOLD).first()
 
 class LicenseLedger(models.Model):
     plan = models.ForeignKey(CustomerPlan, on_delete=CASCADE)  # type: CustomerPlan
@@ -65,6 +69,5 @@ class LicenseLedger(models.Model):
     event_time = models.DateTimeField()  # type: datetime.datetime
     licenses = models.IntegerField()  # type: int
     # None means the plan does not automatically renew.
-    # 0 means the plan has been explicitly downgraded.
     # This cannot be None if plan.automanage_licenses.
     licenses_at_next_renewal = models.IntegerField(null=True)  # type: Optional[int]

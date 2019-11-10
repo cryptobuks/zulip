@@ -78,7 +78,7 @@ class Command(makemessages.Command):
                             default='static/templates',
                             help='Name of the Handlebars template directory')
         parser.add_argument('--frontend-output', type=str,
-                            default='static/locale',
+                            default='locale',
                             help='Name of the frontend messages output directory')
         parser.add_argument('--frontend-namespace', type=str,
                             default='translations.json',
@@ -163,7 +163,7 @@ class Command(makemessages.Command):
         dirname = self.get_template_dir()
 
         for dirpath, dirnames, filenames in os.walk(dirname):
-            for filename in [f for f in filenames if f.endswith(".handlebars")]:
+            for filename in [f for f in filenames if f.endswith(".hbs")]:
                 if filename.startswith('.'):
                     continue
                 with open(os.path.join(dirpath, filename), 'r') as reader:
@@ -191,7 +191,7 @@ class Command(makemessages.Command):
         exclude = self.frontend_exclude
         process_all = self.frontend_all
 
-        paths = glob.glob('%s/*' % self.default_locale_path,)
+        paths = glob.glob('%s/*' % (self.default_locale_path,),)
         all_locales = [os.path.basename(path) for path in paths if os.path.isdir(path)]
 
         # Account for excluded locales

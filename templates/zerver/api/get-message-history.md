@@ -2,7 +2,7 @@
 
 Fetch the message edit history of a previously edited message.
 
-`GET {{ api_url }}/v1/messages/<message_id>/history`
+`GET {{ api_url }}/v1/messages/{message_id}/history`
 
 Note that edit history may be disabled in some organizations; see the
 [Zulip Help Center documentation on editing messages][edit-settings].
@@ -18,10 +18,7 @@ Note that edit history may be disabled in some organizations; see the
 
 {tab|curl}
 
-```
-curl {{ api_url }}/v1/messages/<message_id>/history \
-    -u BOT_EMAIL_ADDRESS:BOT_API_KEY
-```
+{generate_code_example(curl)|/messages/{message_id}/history:get|example}
 
 {end_tabs}
 

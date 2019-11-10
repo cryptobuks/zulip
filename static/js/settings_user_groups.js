@@ -1,6 +1,5 @@
-var settings_user_groups = (function () {
-
-var exports = {};
+var render_admin_user_group_list = require('../templates/admin_user_group_list.hbs');
+var render_confirm_delete_user = require('../templates/confirm_delete_user.hbs');
 
 var meta = {
     loaded: false,
@@ -20,12 +19,18 @@ exports.reload = function () {
     exports.populate_user_groups();
 };
 
+const USER_GROUP_EDIT_POLICY_MEMBERS = 1;
+
 exports.can_edit = function (group_id) {
     if (page_params.is_admin) {
         return true;
     }
 
     if (page_params.is_guest) {
+        return false;
+    }
+
+    if (page_params.realm_user_group_edit_policy !== USER_GROUP_EDIT_POLICY_MEMBERS) {
         return false;
     }
 
@@ -37,7 +42,7 @@ exports.populate_user_groups = function () {
     var user_groups_section = $('#user-groups').expectOne();
     var user_groups_array = user_groups.get_realm_user_groups();
     _.each(user_groups_array, function (data) {
-        user_groups_section.append(templates.render('admin_user_group_list', {
+        user_groups_section.append(render_admin_user_group_list({
             user_group: {
                 name: data.name,
                 id: data.id,
@@ -209,7 +214,7 @@ exports.populate_user_groups = function () {
             }
             if ($(event.relatedTarget).closest('#user-groups #' + data.id) &&
                 $(event.relatedTarget).closest('.save-status.btn-danger').length) {
-                settings_user_groups.reload();
+                exports.reload();
                 return;
             }
             save_name_desc();
@@ -308,7 +313,7 @@ exports.set_up = function () {
                 },
                 success: function () {
                     user_groups.remove(user_group);
-                    settings_user_groups.reload();
+                    exports.reload();
                 },
                 error: function () {
                     btn.text(i18n.t("Failed!"));
@@ -319,7 +324,7 @@ exports.set_up = function () {
         // This is mostly important for styling concerns.
         var modal_parent = $('#settings_content');
 
-        var html_body = templates.render('confirm_delete_user', {
+        var html_body = render_confirm_delete_user({
             group_name: user_group.name,
         });
 
@@ -339,10 +344,4 @@ exports.set_up = function () {
     });
 };
 
-return exports;
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = settings_user_groups;
-}
-window.settings_user_groups = settings_user_groups;
+window.settings_user_groups = exports;

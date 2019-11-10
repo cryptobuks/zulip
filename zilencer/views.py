@@ -1,5 +1,6 @@
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union
 import datetime
+import logging
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email, URLValidator
@@ -19,22 +20,24 @@ from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_error, json_success
 from zerver.lib.validator import check_int, check_string, \
     check_capped_string, check_string_fixed_length, check_float, check_none_or, \
-    check_dict_only, check_list
+    check_dict_only, check_list, check_bool
 from zerver.models import UserProfile
 from zerver.views.push_notifications import validate_token
 from zilencer.models import RemotePushDeviceToken, RemoteZulipServer, \
-    RemoteRealmCount, RemoteInstallationCount
+    RemoteRealmCount, RemoteInstallationCount, RemoteRealmAuditLog
 
-def validate_entity(entity: Union[UserProfile, RemoteZulipServer]) -> None:
+def validate_entity(entity: Union[UserProfile, RemoteZulipServer]) -> RemoteZulipServer:
     if not isinstance(entity, RemoteZulipServer):
         raise JsonableError(err_("Must validate with valid Zulip server API key"))
+    return entity
 
 def validate_bouncer_token_request(entity: Union[UserProfile, RemoteZulipServer],
-                                   token: bytes, kind: int) -> None:
+                                   token: bytes, kind: int) -> RemoteZulipServer:
     if kind not in [RemotePushDeviceToken.APNS, RemotePushDeviceToken.GCM]:
         raise JsonableError(err_("Invalid token type"))
-    validate_entity(entity)
+    server = validate_entity(entity)
     validate_token(token, kind)
+    return server
 
 @csrf_exempt
 @require_post
@@ -84,8 +87,7 @@ def register_remote_push_device(request: HttpRequest, entity: Union[UserProfile,
                                 user_id: int=REQ(), token: bytes=REQ(),
                                 token_kind: int=REQ(validator=check_int),
                                 ios_app_id: Optional[str]=None) -> HttpResponse:
-    validate_bouncer_token_request(entity, token, token_kind)
-    server = cast(RemoteZulipServer, entity)
+    server = validate_bouncer_token_request(entity, token, token_kind)
 
     try:
         with transaction.atomic():
@@ -108,8 +110,7 @@ def unregister_remote_push_device(request: HttpRequest, entity: Union[UserProfil
                                   token_kind: int=REQ(validator=check_int),
                                   user_id: int=REQ(),
                                   ios_app_id: Optional[str]=None) -> HttpResponse:
-    validate_bouncer_token_request(entity, token, token_kind)
-    server = cast(RemoteZulipServer, entity)
+    server = validate_bouncer_token_request(entity, token, token_kind)
     deleted = RemotePushDeviceToken.objects.filter(token=token,
                                                    kind=token_kind,
                                                    user_id=user_id,
@@ -122,8 +123,7 @@ def unregister_remote_push_device(request: HttpRequest, entity: Union[UserProfil
 @has_request_variables
 def remote_server_notify_push(request: HttpRequest, entity: Union[UserProfile, RemoteZulipServer],
                               payload: Dict[str, Any]=REQ(argument_type='body')) -> HttpResponse:
-    validate_entity(entity)
-    server = cast(RemoteZulipServer, entity)
+    server = validate_entity(entity)
 
     user_id = payload['user_id']
     gcm_payload = payload['gcm_payload']
@@ -150,15 +150,28 @@ def remote_server_notify_push(request: HttpRequest, entity: Union[UserProfile, R
 
     return json_success()
 
-def validate_count_stats(server: RemoteZulipServer, model: Any,
-                         counts: List[Dict[str, Any]]) -> None:
+def validate_incoming_table_data(server: RemoteZulipServer, model: Any,
+                                 rows: List[Dict[str, Any]], is_count_stat: bool=False) -> None:
     last_id = get_last_id_from_server(server, model)
-    for item in counts:
-        if item['property'] not in COUNT_STATS:
-            raise JsonableError(_("Invalid property %s" % item['property']))
-        if item['id'] <= last_id:
+    for row in rows:
+        if is_count_stat and row['property'] not in COUNT_STATS:
+            raise JsonableError(_("Invalid property %s") % (row['property'],))
+        if row['id'] <= last_id:
             raise JsonableError(_("Data is out of order."))
-        last_id = item['id']
+        last_id = row['id']
+
+def batch_create_table_data(server: RemoteZulipServer, model: Any,
+                            row_objects: Union[List[RemoteRealmCount],
+                                               List[RemoteInstallationCount]]) -> None:
+    BATCH_SIZE = 1000
+    while len(row_objects) > 0:
+        try:
+            model.objects.bulk_create(row_objects[:BATCH_SIZE])
+        except IntegrityError:
+            logging.warning("Invalid data saving %s for server %s/%s" % (
+                model._meta.db_table, server.hostname, server.uuid))
+            raise JsonableError(_("Invalid data."))
+        row_objects = row_objects[BATCH_SIZE:]
 
 @has_request_variables
 def remote_server_post_analytics(request: HttpRequest,
@@ -179,44 +192,53 @@ def remote_server_post_analytics(request: HttpRequest,
                                          ('end_time', check_float),
                                          ('subgroup', check_none_or(check_string)),
                                          ('value', check_int),
-                                     ])))) -> HttpResponse:
-    validate_entity(entity)
-    server = cast(RemoteZulipServer, entity)
+                                     ]))),
+                                 realmauditlog_rows: Optional[List[Dict[str, Any]]]=REQ(
+                                     validator=check_list(check_dict_only([
+                                         ('id', check_int),
+                                         ('realm', check_int),
+                                         ('event_time', check_float),
+                                         ('backfilled', check_bool),
+                                         ('extra_data', check_none_or(check_string)),
+                                         ('event_type', check_int),
+                                     ])), default=None)) -> HttpResponse:
+    server = validate_entity(entity)
 
-    validate_count_stats(server, RemoteRealmCount, realm_counts)
-    validate_count_stats(server, RemoteInstallationCount, installation_counts)
+    validate_incoming_table_data(server, RemoteRealmCount, realm_counts, True)
+    validate_incoming_table_data(server, RemoteInstallationCount, installation_counts, True)
+    if realmauditlog_rows is not None:
+        validate_incoming_table_data(server, RemoteRealmAuditLog, realmauditlog_rows)
 
-    BATCH_SIZE = 1000
-    while len(realm_counts) > 0:
-        batch = realm_counts[0:BATCH_SIZE]
-        realm_counts = realm_counts[BATCH_SIZE:]
+    row_objects = [RemoteRealmCount(
+        property=row['property'],
+        realm_id=row['realm'],
+        remote_id=row['id'],
+        server=server,
+        end_time=datetime.datetime.fromtimestamp(row['end_time'], tz=timezone_utc),
+        subgroup=row['subgroup'],
+        value=row['value']) for row in realm_counts]
+    batch_create_table_data(server, RemoteRealmCount, row_objects)
 
-        objects_to_create = []
-        for item in batch:
-            objects_to_create.append(RemoteRealmCount(
-                property=item['property'],
-                realm_id=item['realm'],
-                remote_id=item['id'],
-                server=server,
-                end_time=datetime.datetime.fromtimestamp(item['end_time'], tz=timezone_utc),
-                subgroup=item['subgroup'],
-                value=item['value']))
-        RemoteRealmCount.objects.bulk_create(objects_to_create)
+    row_objects = [RemoteInstallationCount(
+        property=row['property'],
+        remote_id=row['id'],
+        server=server,
+        end_time=datetime.datetime.fromtimestamp(row['end_time'], tz=timezone_utc),
+        subgroup=row['subgroup'],
+        value=row['value']) for row in installation_counts]
+    batch_create_table_data(server, RemoteInstallationCount, row_objects)
 
-    while len(installation_counts) > 0:
-        batch = installation_counts[0:BATCH_SIZE]
-        installation_counts = installation_counts[BATCH_SIZE:]
+    if realmauditlog_rows is not None:
+        row_objects = [RemoteRealmAuditLog(
+            realm_id=row['realm'],
+            remote_id=row['id'],
+            server=server,
+            event_time=datetime.datetime.fromtimestamp(row['event_time'], tz=timezone_utc),
+            backfilled=row['backfilled'],
+            extra_data=row['extra_data'],
+            event_type=row['event_type']) for row in realmauditlog_rows]
+        batch_create_table_data(server, RemoteRealmAuditLog, row_objects)
 
-        objects_to_create = []
-        for item in batch:
-            objects_to_create.append(RemoteInstallationCount(
-                property=item['property'],
-                remote_id=item['id'],
-                server=server,
-                end_time=datetime.datetime.fromtimestamp(item['end_time'], tz=timezone_utc),
-                subgroup=item['subgroup'],
-                value=item['value']))
-        RemoteInstallationCount.objects.bulk_create(objects_to_create)
     return json_success()
 
 def get_last_id_from_server(server: RemoteZulipServer, model: Any) -> int:
@@ -228,12 +250,13 @@ def get_last_id_from_server(server: RemoteZulipServer, model: Any) -> int:
 @has_request_variables
 def remote_server_check_analytics(request: HttpRequest,
                                   entity: Union[UserProfile, RemoteZulipServer]) -> HttpResponse:
-    validate_entity(entity)
-    server = cast(RemoteZulipServer, entity)
+    server = validate_entity(entity)
 
     result = {
         'last_realm_count_id': get_last_id_from_server(server, RemoteRealmCount),
         'last_installation_count_id': get_last_id_from_server(
             server, RemoteInstallationCount),
+        'last_realmauditlog_id': get_last_id_from_server(
+            server, RemoteRealmAuditLog),
     }
     return json_success(result)

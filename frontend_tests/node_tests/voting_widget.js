@@ -5,7 +5,6 @@ set_global('i18n', global.stub_i18n);
 
 set_global('people', {});
 set_global('blueslip', global.make_zblueslip());
-set_global('templates', {});
 
 const noop = () => {};
 const return_false = () => false;
@@ -140,14 +139,14 @@ run_test('poll_data_holder my question', () => {
 
 run_test('activate another person poll', () => {
     people.is_my_user_id = return_false;
-    templates.render = (template_name) => {
-        if (template_name === 'poll-widget') {
-            return 'poll-widget';
+    global.stub_templates((template_name) => {
+        if (template_name === 'widgets/poll_widget') {
+            return 'widgets/poll_widget';
         }
-        if (template_name === 'poll-widget-results') {
-            return 'poll-widget-results';
+        if (template_name === 'widgets/poll_widget_results') {
+            return 'widgets/poll_widget_results';
         }
-    };
+    });
 
     const widget_elem = $('<div>').addClass('widget-content');
 
@@ -211,7 +210,7 @@ run_test('activate another person poll', () => {
         assert(!show);
     };
 
-    var show_submit = false;
+    const show_submit = false;
     poll_question_submit.toggle = (show) => {
         assert.equal(show, show_submit);
     };
@@ -234,8 +233,8 @@ run_test('activate another person poll', () => {
 
     poll_widget.activate(opts);
 
-    assert.equal(widget_elem.html(), 'poll-widget');
-    assert.equal(widget_option_container.html(), 'poll-widget-results');
+    assert.equal(widget_elem.html(), 'widgets/poll_widget');
+    assert.equal(widget_option_container.html(), 'widgets/poll_widget_results');
     assert.equal(poll_question_header.text(), 'What do you want?');
 
     const e = {
@@ -305,14 +304,14 @@ run_test('activate own poll', () => {
     $.clear_all_elements();
 
     people.is_my_user_id = return_true;
-    templates.render = (template_name) => {
-        if (template_name === 'poll-widget') {
-            return 'poll-widget';
+    global.stub_templates((template_name) => {
+        if (template_name === 'widgets/poll_widget') {
+            return 'widgets/poll_widget';
         }
-        if (template_name === 'poll-widget-results') {
-            return 'poll-widget-results';
+        if (template_name === 'widgets/poll_widget_results') {
+            return 'widgets/poll_widget_results';
         }
-    };
+    });
 
     const widget_elem = $('<div>').addClass('widget-content');
     let out_data;
@@ -373,7 +372,7 @@ run_test('activate own poll', () => {
         assert(show);
     };
 
-    var show_submit = false;
+    let show_submit = false;
     poll_question_submit.toggle = (show) => {
         assert.equal(show, show_submit);
     };
@@ -396,8 +395,8 @@ run_test('activate own poll', () => {
 
     poll_widget.activate(opts);
 
-    assert.equal(widget_elem.html(), 'poll-widget');
-    assert.equal(widget_option_container.html(), 'poll-widget-results');
+    assert.equal(widget_elem.html(), 'widgets/poll_widget');
+    assert.equal(widget_option_container.html(), 'widgets/poll_widget_results');
     assert.equal(poll_question_header.text(), 'Where to go?');
 
     {

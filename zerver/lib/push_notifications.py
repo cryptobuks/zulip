@@ -7,7 +7,7 @@ import lxml.html
 import re
 import time
 
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -26,11 +26,14 @@ from zerver.lib.message import access_message, \
 from zerver.lib.queue import retry_event
 from zerver.lib.remote_server import send_to_push_bouncer, send_json_to_push_bouncer
 from zerver.lib.timestamp import datetime_to_timestamp
-from zerver.models import PushDeviceToken, Message, Realm, Recipient, \
+from zerver.models import PushDeviceToken, Message, Recipient, \
     UserMessage, UserProfile, \
     get_display_recipient, receives_offline_push_notifications, \
     receives_online_notifications, get_user_profile_by_id, \
     ArchivedMessage
+
+if TYPE_CHECKING:
+    from apns2.client import APNsClient
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +56,10 @@ def hex_to_b64(data: str) -> bytes:
 # Sending to APNs, for iOS
 #
 
-_apns_client = None  # type: Optional[Any]
+_apns_client = None  # type: Optional[APNsClient]
 _apns_client_initialized = False
 
-def get_apns_client() -> Any:
+def get_apns_client() -> 'Optional[APNsClient]':
     # We lazily do this import as part of optimizing Zulip's base
     # import time.
     from apns2.client import APNsClient
@@ -110,10 +113,9 @@ def send_apple_push_notification(user_id: int, devices: List[DeviceToken],
     # notification queue worker, it's best to only import them in the
     # code that needs them.
     from apns2.payload import Payload as APNsPayload
-    from apns2.client import APNsClient
     from hyper.http20.exceptions import HTTP20Error
 
-    client = get_apns_client()  # type: APNsClient
+    client = get_apns_client()
     if client is None:
         logger.debug("APNs: Dropping a notification because nothing configured.  "
                      "Set PUSH_NOTIFICATION_BOUNCER_URL (or APNS_CERT_FILE).")
@@ -135,7 +137,7 @@ def send_apple_push_notification(user_id: int, devices: List[DeviceToken],
         def attempt_send() -> Optional[str]:
             try:
                 stream_id = client.send_notification_async(
-                    device.token, payload, topic='org.zulip.Zulip',
+                    device.token, payload, topic=settings.APNS_TOPIC,
                     expiration=expiration)
                 return client.get_notification_result(stream_id)
             except HTTP20Error as e:
@@ -161,7 +163,7 @@ def send_apple_push_notification(user_id: int, devices: List[DeviceToken],
         if result[0] == "Unregistered":
             # For some reason, "Unregistered" result values have a
             # different format, as a tuple of the pair ("Unregistered", 12345132131).
-            result = result[0]  # type: ignore # APNS API is inconsistent
+            result = result[0]
         if result == 'Success':
             logger.info("APNs: Success sending for user %d to device %s",
                         user_id, device.token)
@@ -456,7 +458,8 @@ def get_gcm_alert(message: Message) -> str:
         return "New private group message from %s" % (sender_str,)
     elif message.recipient.type == Recipient.PERSONAL and message.trigger == 'private_message':
         return "New private message from %s" % (sender_str,)
-    elif message.is_stream_message() and message.trigger == 'mentioned':
+    elif message.is_stream_message() and (message.trigger == 'mentioned' or
+                                          message.trigger == 'wildcard_mentioned'):
         return "New mention from %s" % (sender_str,)
     else:  # message.is_stream_message() and message.trigger == 'stream_push_notify'
         return "New stream message from %s in %s" % (sender_str, get_display_recipient(message.recipient),)
@@ -486,15 +489,31 @@ def get_mobile_push_content(rendered_content: str) -> str:
         quote_text += '\n'
         return quote_text
 
+    def render_olist(ol: lxml.html.HtmlElement) -> str:
+        items = []
+        counter = int(ol.get('start')) if ol.get('start') else 1
+        nested_levels = len(list(ol.iterancestors('ol')))
+        indent = ('\n' + '  ' * nested_levels) if nested_levels else ''
+
+        for li in ol:
+            items.append(indent + str(counter) + '. ' + process(li).strip())
+            counter += 1
+
+        return '\n'.join(items)
+
     def process(elem: lxml.html.HtmlElement) -> str:
-        plain_text = get_text(elem)
-        sub_text = ''
-        for child in elem:
-            sub_text += process(child)
-        if elem.tag == 'blockquote':
-            sub_text = format_as_quote(sub_text)
-        plain_text += sub_text
-        plain_text += elem.tail or ""
+        plain_text = ''
+        if elem.tag == 'ol':
+            plain_text = render_olist(elem)
+        else:
+            plain_text = get_text(elem)
+            sub_text = ''
+            for child in elem:
+                sub_text += process(child)
+            if elem.tag == 'blockquote':
+                sub_text = format_as_quote(sub_text)
+            plain_text += sub_text
+            plain_text += elem.tail or ""
         return plain_text
 
     if settings.PUSH_NOTIFICATION_REDACT_CONTENT:
@@ -513,20 +532,21 @@ def truncate_content(content: str) -> Tuple[str, bool]:
         return content, False
     return content[:200] + "…", True
 
-def get_base_payload(realm: Realm) -> Dict[str, Any]:
+def get_base_payload(user_profile: UserProfile) -> Dict[str, Any]:
     '''Common fields for all notification payloads.'''
     data = {}  # type: Dict[str, Any]
 
     # These will let the app support logging into multiple realms and servers.
     data['server'] = settings.EXTERNAL_HOST
-    data['realm_id'] = realm.id
-    data['realm_uri'] = realm.uri
+    data['realm_id'] = user_profile.realm.id
+    data['realm_uri'] = user_profile.realm.uri
+    data['user_id'] = user_profile.id
 
     return data
 
-def get_message_payload(message: Message) -> Dict[str, Any]:
+def get_message_payload(user_profile: UserProfile, message: Message) -> Dict[str, Any]:
     '''Common fields for `message` payloads, for all platforms.'''
-    data = get_base_payload(message.sender.realm)
+    data = get_base_payload(user_profile)
 
     # `sender_id` is preferred, but some existing versions use `sender_email`.
     data['sender_id'] = message.sender.id
@@ -549,7 +569,8 @@ def get_apns_alert_title(message: Message) -> str:
     On an iOS notification, this is the first bolded line.
     """
     if message.recipient.type == Recipient.HUDDLE:
-        recipients = cast(List[Dict[str, Any]], get_display_recipient(message.recipient))
+        recipients = get_display_recipient(message.recipient)
+        assert isinstance(recipients, list)
         return ', '.join(sorted(r['full_name'] for r in recipients))
     elif message.is_stream_message():
         return "#%s > %s" % (get_display_recipient(message.recipient), message.topic_name(),)
@@ -561,7 +582,9 @@ def get_apns_alert_subtitle(message: Message) -> str:
     On an iOS notification, this is the second bolded line.
     """
     if message.trigger == "mentioned":
-        return message.sender.full_name + " mentioned you:"
+        return _("%(full_name)s mentioned you:") % dict(full_name=message.sender.full_name)
+    elif message.trigger == "wildcard_mentioned":
+        return _("%(full_name)s mentioned everyone:") % dict(full_name=message.sender.full_name)
     elif message.recipient.type == Recipient.PERSONAL:
         return ""
     # For group PMs, or regular messages to a stream, just use a colon to indicate this is the sender.
@@ -569,7 +592,7 @@ def get_apns_alert_subtitle(message: Message) -> str:
 
 def get_message_payload_apns(user_profile: UserProfile, message: Message) -> Dict[str, Any]:
     '''A `message` payload for iOS, via APNs.'''
-    zulip_data = get_message_payload(message)
+    zulip_data = get_message_payload(user_profile, message)
     zulip_data.update({
         'message_ids': [message.id],
     })
@@ -591,14 +614,13 @@ def get_message_payload_gcm(
         user_profile: UserProfile, message: Message,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     '''A `message` payload + options, for Android via GCM/FCM.'''
-    data = get_message_payload(message)
+    data = get_message_payload(user_profile, message)
     content, truncated = truncate_content(get_mobile_push_content(message.rendered_content))
     data.update({
-        'user': user_profile.email,
         'event': 'message',
         'alert': get_gcm_alert(message),
         'zulip_message_id': message.id,  # message_id is reserved for CCS
-        'time': datetime_to_timestamp(message.pub_date),
+        'time': datetime_to_timestamp(message.date_sent),
         'content': content,
         'content_truncated': truncated,
         'sender_full_name': message.sender.full_name,
@@ -611,7 +633,7 @@ def get_remove_payload_gcm(
         user_profile: UserProfile, message_ids: List[int],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     '''A `remove` payload + options, for Android via GCM/FCM.'''
-    gcm_payload = get_base_payload(user_profile.realm)
+    gcm_payload = get_base_payload(user_profile)
     gcm_payload.update({
         'event': 'remove',
         'zulip_message_ids': ','.join(str(id) for id in message_ids),
@@ -643,7 +665,7 @@ def handle_remove_push_notification(user_profile_id: int, message_ids: List[int]
             def failure_processor(event: Dict[str, Any]) -> None:
                 logger.warning(
                     "Maximum retries exceeded for trigger:%s event:push_notification" % (
-                        event['user_profile_id']))
+                        event['user_profile_id'],))
     else:
         android_devices = list(PushDeviceToken.objects.filter(
             user=user_profile, kind=PushDeviceToken.GCM))
@@ -721,7 +743,7 @@ def handle_push_notification(user_profile_id: int, missed_message: Dict[str, Any
             def failure_processor(event: Dict[str, Any]) -> None:
                 logger.warning(
                     "Maximum retries exceeded for trigger:%s event:push_notification" % (
-                        event['user_profile_id']))
+                        event['user_profile_id'],))
             retry_event('missedmessage_mobile_notifications', missed_message,
                         failure_processor)
         return

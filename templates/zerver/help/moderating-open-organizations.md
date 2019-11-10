@@ -17,11 +17,17 @@ Moderation is a big part of making an open community work.
 * Create at least one
   [default stream](/help/set-default-streams-for-new-users) where
   [only admins can post](/help/announcement-only-streams).
+* Add a [waiting period](/help/restrict-permissions-of-new-members) before
+  new users can take disruptive actions.
+* [Restrict email visibility](/help/restrict-visibility-of-email-addresses)
+  to reduce the likelihood of off-platform spam.
 
 ## Response
 
 * [Ban (deactivate) users](/help/deactivate-or-reactivate-a-user) acting in
   bad faith. You can reactivate them later if they repent.
+* Use the `streams:public sender:user@example.com`
+  [search operators](/help/search-for-messages) to find all messages sent by a user.
 * Delete messages, [delete streams](/help/delete-a-stream), and
   [unsubscribe users from streams](/help/add-or-remove-users-from-a-stream).
 * [Rename topics](/help/rename-a-topic).
@@ -33,8 +39,6 @@ Moderation is a big part of making an open community work.
 
 ## In the works
 
-* **Mark as spam**. This will allow non-admins to collectively impose a
-  temporary ban on a user.
 * **Delete spammer**. This will wipe the user from your Zulip, by deleting
   all their messages and reactions, banning them, etc.
 * **Mute user**. This will allow an individual user to hide the messages of

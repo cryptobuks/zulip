@@ -43,9 +43,7 @@ def build_email(template_prefix: str, to_user_ids: Optional[List[int]]=None,
     assert (to_user_ids is None) ^ (to_emails is None)
     if to_user_ids is not None:
         to_users = [get_user_profile_by_id(to_user_id) for to_user_id in to_user_ids]
-        # Change to formataddr((to_user.full_name, to_user.email)) once
-        # https://github.com/zulip/zulip/issues/4676 is resolved
-        to_emails = [to_user.delivery_email for to_user in to_users]
+        to_emails = [formataddr((to_user.full_name, to_user.delivery_email)) for to_user in to_users]
 
     if context is None:
         context = {}
@@ -160,7 +158,7 @@ def send_future_email(template_prefix: str, realm: Realm, to_user_ids: Optional[
 
 def send_email_to_admins(template_prefix: str, realm: Realm, from_name: Optional[str]=None,
                          from_address: Optional[str]=None, context: Dict[str, Any]={}) -> None:
-    admins = realm.get_admin_users()
+    admins = realm.get_human_admin_users()
     admin_user_ids = [admin.id for admin in admins]
     send_email(template_prefix, to_user_ids=admin_user_ids, from_name=from_name,
                from_address=from_address, context=context)

@@ -6,7 +6,7 @@ $far_left_gutter_size: 10px;
 $left_col_size: 19px;
 /* The full topic indentation includes 4px of indent in addition to
    the above (and another 5px of padding not measured here) */
-$topic_indent: $far_left_gutter_size + $left_col_size + 4px;
+$topic_indent: calc($far_left_gutter_size + $left_col_size + 4px);
 
 #left-sidebar #group-pm-list {
     display: none;
@@ -21,6 +21,13 @@ $topic_indent: $far_left_gutter_size + $left_col_size + 4px;
     font-size: 15px;
     font-weight: 800;
     min-width: $left_col_size;
+    text-align: center;
+}
+
+/* Ideally we'd handle hashtags using an <i> and just have a single rule here. */
+.stream-privacy span.hashtag,
+#left-sidebar .filter-icon i {
+    padding-right: 3px;
 }
 
 .pm_left_col {
@@ -32,8 +39,7 @@ $topic_indent: $far_left_gutter_size + $left_col_size + 4px;
     font-size: 14px;
 }
 
-li.show-more-topics a,
-li.show-more-private-messages a {
+li.show-more-topics a {
     font-size: 12px;
 }
 
@@ -78,7 +84,7 @@ li.show-more-private-messages a {
     overflow: visible;
     /* The -1px here prevents the scrollbar from going above the top of the container */
     margin-top: -1px;
-    margin-bottom: 18px;
+    margin-bottom: 10px;
     padding: 0;
     font-weight: normal;
 }
@@ -87,15 +93,15 @@ li.show-more-private-messages a {
     margin-bottom: 4px;
 }
 
-.narrows_panel li {
-    margin: 1px 0px;
+.narrows_panel li a {
+    margin-top: 1px;
 }
 
 .narrows_panel li a:hover {
     text-decoration: none;
 }
 
-#stream_filters li {
+#stream_filters li a {
     padding: 1px 0px;
 }
 
@@ -113,7 +119,7 @@ li.show-more-private-messages a {
 #private-container,
 #stream-filters-container {
     overflow-x: hidden;
-    overflow-y: hidden;
+    overflow-y: auto;
     position: relative;
     z-index: 0;
     width: 100%;
@@ -132,6 +138,21 @@ li.show-more-private-messages a {
 
 #stream_filters li.active-sub-filter:hover {
     background-color: hsl(120, 11%, 82%);
+}
+
+#add-stream-link {
+    text-decoration: none;
+    margin-left: 10px;
+    margin-bottom: 18px;
+}
+
+#add-stream-link i {
+    min-width: 19px;
+    text-align: center;
+}
+
+#add-stream-link i::before {
+    padding-right: 3px;
 }
 
 ul.filters {
@@ -176,10 +197,6 @@ li.top_left_starred_messages {
     padding-right: 10px;
 }
 
-li.show-more-private-messages {
-    padding-left: $far_left_gutter_size + $left_col_size;
-}
-
 .top_left_row,
 .bottom_left_row,
 .top_left_private_messages {
@@ -192,13 +209,18 @@ li.show-more-private-messages {
 
 .top_left_all_messages i.fa-home {
     position: relative;
-    top: 1px;
-    left: -1px;
-    font-size: 17px;
+    font-size: 15px;
 }
 
 .top_left_private_messages i.fa-envelope {
-    font-size: 12px;
+    position: relative;
+    top: -1px;
+    font-size: 11px;
+}
+
+.top_left_mentions i.fa-at,
+.top_left_starred_messages i.fa-star {
+    font-size: 13px;
 }
 
 /* We are mostly consistent in how we style
@@ -273,7 +295,6 @@ li.show-more-private-messages {
     line-height: 1.1;
 }
 
-.filter-icon i,
 .all-messages-arrow i,
 .stream-sidebar-arrow i,
 .starred-messages-sidebar-arrow i,
@@ -302,7 +323,7 @@ li.show-more-private-messages {
 .all-messages-arrow,
 .starred-messages-sidebar-arrow,
 .stream-sidebar-arrow {
-    top: 2px;
+    top: 3px;
     right: 10px;
     font-size: 0.8em;
 }
@@ -410,7 +431,6 @@ li.topic-list-item {
     padding-right: 5px;
 }
 
-li.show-more-private-messages,
 li.expanded_private_message {
     position: relative;
     padding-top: 1px;
@@ -524,22 +544,17 @@ li.show-more-topics a {
     display: none;
 }
 
-.zoomed-in .show-more-private-messages {
-    display: none;
-}
-
-.zoomed-out .zoom-out-hide {
-    display: none;
-}
-
-.zoom-out .zoom-out-hide {
-    display: none;
-}
-
 .zoom-in .zoom-in-hide {
     display: none;
 }
 
 .show-all-streams .fa-chevron-left {
     text-decoration: none;
+}
+
+li.top_left_all_messages a,
+li.top_left_private_messages a,
+li.top_left_mentions a,
+li.top_left_starred_messages a {
+    display: block;
 }

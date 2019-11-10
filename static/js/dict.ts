@@ -4,10 +4,10 @@ import * as _ from 'underscore';
  * Implementation detail of the Dict class. `key` is `k` converted to a string,
  * in lowercase if the `fold_case` option is enabled.
  */
-type KeyValue<K, V> = { k: K, v: V }
+type KeyValue<K, V> = { k: K; v: V };
 type Items<K, V> = {
-    [key: string]: KeyValue<K, V>
-}
+    [key: string]: KeyValue<K, V>;
+};
 
 /**
  * This class primarily exists to support the fold_case option, because so many
@@ -38,10 +38,11 @@ export class Dict<K, V> {
             throw new TypeError("Cannot convert argument to Dict");
         }
 
-        let dict = new Dict<string, V>(opts);
-        for (const key in obj) {
-            dict.set(key, obj[key]);
-        }
+        const dict = new Dict<string, V>(opts);
+        _.each(obj, function (val: V, key: string) {
+            dict.set(key, val);
+        });
+
         return dict;
     }
 
@@ -56,25 +57,15 @@ export class Dict<K, V> {
             throw new TypeError("Argument is not an array");
         }
 
-        let dict = new Dict<K, V | true>(opts);
+        const dict = new Dict<K, V | true>(opts);
         for (const key of arr) {
             dict.set(key, true);
         }
         return dict;
     }
 
-    // Handle case-folding of keys and the empty string.
-    private _munge(key: K): string | undefined {
-        if (key === undefined) {
-            blueslip.error("Tried to call a Dict method with an undefined key.");
-            return undefined;
-        }
-        let str_key = ':' + key.toString();
-        return this._fold_case ? str_key.toLowerCase() : str_key;
-    }
-
     clone(): Dict<K, V> {
-        let dict = new Dict<K, V>({fold_case: this._fold_case});
+        const dict = new Dict<K, V>({fold_case: this._fold_case});
         dict._items = { ...this._items };
         return dict;
     }
@@ -133,11 +124,21 @@ export class Dict<K, V> {
         return _.isEmpty(this._items);
     }
 
-    each(f: (v: V, k?: K) => void) {
+    each(f: (v: V, k?: K) => void): void {
         _.each(this._items, (mapping: KeyValue<K, V>) => f(mapping.v, mapping.k));
     }
 
-    clear() {
+    clear(): void {
         this._items = {};
+    }
+
+    // Handle case-folding of keys and the empty string.
+    private _munge(key: K): string | undefined {
+        if (key === undefined) {
+            blueslip.error("Tried to call a Dict method with an undefined key.");
+            return undefined;
+        }
+        const str_key = ':' + key.toString();
+        return this._fold_case ? str_key.toLowerCase() : str_key;
     }
 }

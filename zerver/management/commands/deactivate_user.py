@@ -1,9 +1,8 @@
-
 from argparse import ArgumentParser
 from typing import Any
 
 from zerver.lib.actions import do_deactivate_user
-from zerver.lib.management import ZulipBaseCommand
+from zerver.lib.management import ZulipBaseCommand, CommandError
 from zerver.lib.sessions import user_sessions
 from zerver.models import UserProfile
 
@@ -39,8 +38,7 @@ class Command(ZulipBaseCommand):
         ))
 
         if not options["for_real"]:
-            print("This was a dry run. Pass -f to actually deactivate.")
-            exit(1)
+            raise CommandError("This was a dry run. Pass -f to actually deactivate.")
 
         do_deactivate_user(user_profile)
         print("Sessions deleted, user deactivated.")

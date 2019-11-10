@@ -1,4 +1,3 @@
-
 import time
 import logging
 
@@ -166,7 +165,7 @@ def fix_pre_pointer(cursor: CursorObj, user_profile: UserProfile) -> None:
             WHERE (
                 zerver_subscription.user_profile_id = '%s' AND
                 zerver_recipient.type = 2 AND
-                zerver_subscription.in_home_view AND
+                (NOT zerver_subscription.is_muted) AND
                 zerver_subscription.active
             )
         '''

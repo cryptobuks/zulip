@@ -2,7 +2,7 @@ import datetime
 from argparse import ArgumentParser
 from typing import Any, List
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Count
 from django.utils.timezone import now as timezone_now
 
@@ -33,32 +33,32 @@ class Command(BaseCommand):
 
     def messages_sent_by(self, user: UserProfile, days_ago: int) -> int:
         sent_time_cutoff = timezone_now() - datetime.timedelta(days=days_ago)
-        return human_messages.filter(sender=user, pub_date__gt=sent_time_cutoff).count()
+        return human_messages.filter(sender=user, date_sent__gt=sent_time_cutoff).count()
 
     def total_messages(self, realm: Realm, days_ago: int) -> int:
         sent_time_cutoff = timezone_now() - datetime.timedelta(days=days_ago)
-        return Message.objects.filter(sender__realm=realm, pub_date__gt=sent_time_cutoff).count()
+        return Message.objects.filter(sender__realm=realm, date_sent__gt=sent_time_cutoff).count()
 
     def human_messages(self, realm: Realm, days_ago: int) -> int:
         sent_time_cutoff = timezone_now() - datetime.timedelta(days=days_ago)
-        return human_messages.filter(sender__realm=realm, pub_date__gt=sent_time_cutoff).count()
+        return human_messages.filter(sender__realm=realm, date_sent__gt=sent_time_cutoff).count()
 
     def api_messages(self, realm: Realm, days_ago: int) -> int:
         return (self.total_messages(realm, days_ago) - self.human_messages(realm, days_ago))
 
     def stream_messages(self, realm: Realm, days_ago: int) -> int:
         sent_time_cutoff = timezone_now() - datetime.timedelta(days=days_ago)
-        return human_messages.filter(sender__realm=realm, pub_date__gt=sent_time_cutoff,
+        return human_messages.filter(sender__realm=realm, date_sent__gt=sent_time_cutoff,
                                      recipient__type=Recipient.STREAM).count()
 
     def private_messages(self, realm: Realm, days_ago: int) -> int:
         sent_time_cutoff = timezone_now() - datetime.timedelta(days=days_ago)
-        return human_messages.filter(sender__realm=realm, pub_date__gt=sent_time_cutoff).exclude(
+        return human_messages.filter(sender__realm=realm, date_sent__gt=sent_time_cutoff).exclude(
             recipient__type=Recipient.STREAM).exclude(recipient__type=Recipient.HUDDLE).count()
 
     def group_private_messages(self, realm: Realm, days_ago: int) -> int:
         sent_time_cutoff = timezone_now() - datetime.timedelta(days=days_ago)
-        return human_messages.filter(sender__realm=realm, pub_date__gt=sent_time_cutoff).exclude(
+        return human_messages.filter(sender__realm=realm, date_sent__gt=sent_time_cutoff).exclude(
             recipient__type=Recipient.STREAM).exclude(recipient__type=Recipient.PERSONAL).count()
 
     def report_percentage(self, numerator: float, denominator: float, text: str) -> None:
@@ -73,8 +73,7 @@ class Command(BaseCommand):
             try:
                 realms = [get_realm(string_id) for string_id in options['realms']]
             except Realm.DoesNotExist as e:
-                print(e)
-                exit(1)
+                raise CommandError(e)
         else:
             realms = Realm.objects.all()
 
@@ -131,7 +130,7 @@ class Command(BaseCommand):
                 user_profile__in=user_profiles, active=True)
 
             # Streams not in home view
-            non_home_view = active_user_subs.filter(in_home_view=False).values(
+            non_home_view = active_user_subs.filter(is_muted=True).values(
                 "user_profile").annotate(count=Count("user_profile"))
             print("%d users have %d streams not in home view" % (
                 len(non_home_view), sum([elt["count"] for elt in non_home_view])))

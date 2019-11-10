@@ -145,7 +145,7 @@ string, use the `id` function, as it will simplify future code changes.
 In most contexts in JavaScript where a string is needed, you can pass a
 number without any explicit conversion.
 
-### JavaScript var
+### JavaScript `var`
 
 Always declare JavaScript variables using `var`.  JavaScript has
 function scope only, not block scope. This means that a `var`
@@ -153,7 +153,12 @@ declaration inside a `for` or `if` acts the same as a `var`
 declaration at the beginning of the surrounding `function`. To avoid
 confusion, declare all variables at the top of a function.
 
-### JavaScript `for (i in myArray)`
+#### TypeScript `const` and `let`
+
+When writing TypeScript, we prefer to use `const` or `let` where
+possible.
+
+### JavaScript and TypeScript `for (i in myArray)`
 
 Don't use it:
 [[1]](http://stackoverflow.com/questions/500504/javascript-for-in-with-arrays),
@@ -163,8 +168,8 @@ Don't use it:
 ### Translation tags
 
 Remember to
-[tag all user-facing strings for translation](../translating/translating.html), whether
-they are in HTML templates or JavaScript editing the HTML (e.g. error
+[tag all user-facing strings for translation](../translating/translating.md), whether
+they are in HTML templates or JavaScript/TypeScript editing the HTML (e.g. error
 messages).
 
 ### State and logs files
@@ -212,7 +217,7 @@ we should still avoid extremely long lines. A general guideline is:
 refactor stuff to get it under 85 characters, unless that makes the
 code a lot uglier, in which case it's fine to go up to 120 or so.
 
-### JavaScript
+### JavaScript and TypeScript
 
 When calling a function with an anonymous function as an argument, use
 this style:
@@ -231,7 +236,7 @@ functions or other arguments following them.
 Combine adjacent on-ready functions, if they are logically related.
 
 The best way to build complicated DOM elements is a Mustache template
-like `static/templates/message_reactions.handlebars`. For simpler things
+like `static/templates/message_reactions.hbs`. For simpler things
 you can use jQuery DOM building APIs like so:
 
     var new_tr = $('<tr />').attr('id', object.id);
@@ -292,5 +297,5 @@ All significant new features should come with tests. See testing.
 
 ### Third party code
 
-See [our docs on dependencies](../subsystems/dependencies.html) for discussion of
+See [our docs on dependencies](../subsystems/dependencies.md) for discussion of
 rules about integrating third-party projects.

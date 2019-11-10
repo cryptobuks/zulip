@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 ################################################################
 # Zulip Server settings.
@@ -51,6 +51,11 @@ EXTERNAL_HOST = 'zulip.example.com'
 # Note that these should just be hostnames, without port numbers.
 #ALLOWED_HOSTS = ['zulip-alias.example.com', '192.0.2.1']
 
+# If EXTERNAL_HOST is not a valid domain name (e.g. an IP address),
+# set FAKE_EMAIL_DOMAIN below to a domain that Zulip can use when
+# generating (fake) email addresses for bots, dummy users, etc.
+#FAKE_EMAIL_DOMAIN = 'fake-domain.example.com'
+
 
 ################
 # Outgoing email (SMTP) settings.
@@ -86,7 +91,10 @@ EXTERNAL_HOST = 'zulip.example.com'
 # https://zulip.readthedocs.io/en/latest/production/email.html for details.
 #ADD_TOKENS_TO_NOREPLY_ADDRESS = True
 #TOKENIZED_NOREPLY_EMAIL_ADDRESS = "noreply-{token}@example.com"
-# Used for noreply emails only if ADD_TOKENS_TO_NOREPLY_ADDRESS=False
+# NOREPLY_EMAIL_ADDRESS is the sender for noreply emails that don't
+# contain confirmation links (where the security problem fixed by
+# ADD_TOKENS_TO_NOREPLY_ADDRESS does not exist), as well as for
+# confirmation emails when ADD_TOKENS_TO_NOREPLY_ADDRESS=False.
 #NOREPLY_EMAIL_ADDRESS = 'noreply@example.com'
 
 # Many countries and bulk mailers require certain types of email to display
@@ -109,12 +117,13 @@ EXTERNAL_HOST = 'zulip.example.com'
 # initial realm and user.
 AUTHENTICATION_BACKENDS = (
     'zproject.backends.EmailAuthBackend',  # Email and password; just requires SMTP setup
-    # 'zproject.backends.GoogleMobileOauth2Backend',  # Google Apps, setup below
+    # 'zproject.backends.GoogleAuthBackend',  # Google auth, setup below
     # 'zproject.backends.GitHubAuthBackend',  # GitHub auth, setup below
     # 'zproject.backends.AzureADAuthBackend',  # Microsoft Azure Active Directory auth, setup below
+    # 'zproject.backends.SAMLAuthBackend', # SAML, setup below
     # 'zproject.backends.ZulipLDAPAuthBackend',  # LDAP, setup below
     # 'zproject.backends.ZulipRemoteUserBackend',  # Local SSO, setup docs on readthedocs
-)
+)  # type: Tuple[str, ...]
 
 ########
 # Google OAuth.
@@ -126,7 +135,7 @@ AUTHENTICATION_BACKENDS = (
 # correspond to your Zulip instance.
 #
 # (2) Navigate to "APIs & services" > "Library", and find the
-# "Google+ API".  Choose "Enable".
+# "Identity Toolkit API".  Choose "Enable".
 #
 # (3) Return to "Credentials", and select "Create credentials".
 # Choose "OAuth client ID", and follow prompts to create a consent
@@ -135,9 +144,9 @@ AUTHENTICATION_BACKENDS = (
 # based on your value for EXTERNAL_HOST.
 #
 # (4) You should get a client ID and a client secret. Copy them.
-# Use the client ID as `GOOGLE_OAUTH2_CLIENT_ID` here, and put the
-# client secret in zulip-secrets.conf as `google_oauth2_client_secret`.
-#GOOGLE_OAUTH2_CLIENT_ID = <your client ID from Google>
+# Use the client ID as `SOCIAL_AUTH_GOOGLE_KEY` here, and put the
+# client secret in zulip-secrets.conf as `social_auth_google_secret`.
+#SOCIAL_AUTH_GOOGLE_KEY = <your client ID from Google>
 
 ########
 # GitHub OAuth.
@@ -177,6 +186,72 @@ AUTHENTICATION_BACKENDS = (
 #
 #SOCIAL_AUTH_SUBDOMAIN = 'auth'
 
+########
+# SAML Authentication
+#
+# For SAML authentication, you will need to configure the settings
+# below using information from your SAML Identity Provider, as
+# explained in:
+#
+#     https://zulip.readthedocs.io/en/latest/production/authentication-methods.html#saml
+#
+# You will need to modify these SAML settings:
+SOCIAL_AUTH_SAML_ORG_INFO = {
+    "en-US": {
+        "displayname": "Example, Inc. Zulip",
+        "name": "zulip",
+        "url": "%s%s" % ('https://', EXTERNAL_HOST),
+    }
+}
+SOCIAL_AUTH_SAML_ENABLED_IDPS = {
+    # The fields are explained in detail here:
+    #     https://python-social-auth-docs.readthedocs.io/en/latest/backends/saml.html
+    "idp_name": {
+        # Configure entity_id and url according to information provided to you by your IdP:
+        "entity_id": "https://idp.testshib.org/idp/shibboleth",
+        "url": "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO",
+        # The part below corresponds to what's likely referred to as something like
+        # "Attribute Statements" (with Okta as your IdP) or "Attribute Mapping" (with G Suite).
+        # The names on the right side need to correspond to the names under which
+        # the IdP will send the user attributes. With these defaults, it's expected
+        # that the user's email will be sent with the "email" attribute name,
+        # the first name and the last name with the "first_name", "last_name" attribute names.
+        "attr_user_permanent_id": "email",
+        "attr_first_name": "first_name",
+        "attr_last_name": "last_name",
+        "attr_username": "email",
+        "attr_email": "email",
+        # The "x509cert" attribute is automatically read from
+        # /etc/zulip/saml/idps/{idp_name}.crt; don't specify it here.
+
+        # Optionally, you can edit display_name and display_icon
+        # settings below to change the name and icon that will show on
+        # the login button.
+        "display_name": "SAML",
+        # Path to a square image file containing a logo to appear at
+        # the left end of the login/register buttons for this IDP.
+        # The default of None results in a text-only button.
+        # "display_icon": "/path/to/icon.png",
+    }
+}
+
+SOCIAL_AUTH_SAML_SECURITY_CONFIG = {
+    # If you've set up the optional private and public server keys,
+    # set this to True to enable signing of SAMLRequests using the
+    # private key.
+    "authnRequestsSigned": False,
+}
+
+# These SAML settings you likely won't need to modify.
+SOCIAL_AUTH_SAML_SP_ENTITY_ID = 'https://' + EXTERNAL_HOST
+SOCIAL_AUTH_SAML_TECHNICAL_CONTACT = {
+    "givenName": "Technical team",
+    "emailAddress": ZULIP_ADMINISTRATOR,
+}
+SOCIAL_AUTH_SAML_SUPPORT_CONTACT = {
+    "givenName": "Support team",
+    "emailAddress": ZULIP_ADMINISTRATOR,
+}
 
 ########
 # Azure Active Directory OAuth.
@@ -202,7 +277,6 @@ AUTHENTICATION_BACKENDS = (
 # corresponding email address is "username@example.com", set
 # SSO_APPEND_DOMAIN = "example.com")
 SSO_APPEND_DOMAIN = None  # type: Optional[str]
-
 
 ################
 # Miscellaneous settings.
@@ -271,7 +345,7 @@ FEEDBACK_EMAIL = ZULIP_ADMINISTRATOR
 # Controls whether or not Zulip will provide inline previews of
 # websites that are referenced in links in messages.  Note: this feature
 # can also be disabled in a realm's organization settings.
-#INLINE_URL_EMBED_PREVIEW = False
+#INLINE_URL_EMBED_PREVIEW = True
 
 # Controls whether or not Zulip will parse links starting with
 # "file:///" as a hyperlink (useful if you have e.g. an NFS share).
@@ -282,6 +356,11 @@ ENABLE_FILE_LINKS = False
 # stored in Amazon S3 or another scalable data store here.  See docs at:
 #
 #   https://zulip.readthedocs.io/en/latest/production/upload-backends.html
+#
+# If you change LOCAL_UPLOADS_DIR to a different path, you will also
+# need to manually edit Zulip's nginx configuration to use the new
+# path.  For that reason, we recommend replacing /home/zulip/uploads
+# with a symlink instead of changing LOCAL_UPLOADS_DIR.
 LOCAL_UPLOADS_DIR = "/home/zulip/uploads"
 #S3_AUTH_UPLOADS_BUCKET = ""
 #S3_AVATAR_BUCKET = ""
@@ -290,11 +369,19 @@ LOCAL_UPLOADS_DIR = "/home/zulip/uploads"
 # Maximum allowed size of uploaded files, in megabytes.  DO NOT SET
 # ABOVE 80MB.  The file upload implementation doesn't support chunked
 # uploads, so browsers will crash if you try uploading larger files.
+# Set MAX_FILE_UPLOAD_SIZE to 0 to disable file uploads completely
+# (including hiding upload-related options from UI).
 MAX_FILE_UPLOAD_SIZE = 25
 
-# Controls whether name changes are completely disabled for this installation
-# This is useful in settings where you're syncing names from an integrated LDAP/Active Directory
+# Controls whether name changes are completely disabled for this
+# installation.  This is useful when you're syncing names from an
+# integrated LDAP/Active Directory.
 NAME_CHANGES_DISABLED = False
+
+# Controls whether avatar changes are completely disabled for this
+# installation.  This is useful when you're syncing avatars from an
+# integrated LDAP/Active Directory.
+AVATAR_CHANGES_DISABLED = False
 
 # Controls whether users who have not uploaded an avatar will receive an avatar
 # from gravatar.com.
@@ -342,50 +429,12 @@ ENABLE_GRAVATAR = True
 # Email gateway integration.
 #
 # The Email gateway integration supports sending messages into Zulip
-# by sending an email.  This is useful for receiving notifications
-# from third-party services that only send outgoing notifications via
-# email.  Once this integration is configured, each stream will have
-# an email address documented on the stream settings page and emails
-# sent to that address will be delivered into the stream.
-#
-# There are two ways to configure email mirroring in Zulip:
-#  1. Local delivery: A MTA runs locally and passes mail directly to Zulip
-#  2. Polling: Checks an IMAP inbox every minute for new messages.
-#
-# The local delivery configuration is preferred for production because
-# it supports nicer looking email addresses and has no cron delay,
-# while the polling mechanism is better for testing/developing this
-# feature because it doesn't require a public-facing IP/DNS setup.
-#
-# The main email mirror setting is the email address pattern, where
-# you specify the email address format you'd like the integration to
-# use.  It should be one of the following:
-#   %s@zulip.example.com (for local delivery)
-#   username+%s@example.com (for polling if EMAIL_GATEWAY_LOGIN=username@example.com)
+# by sending an email.
+# For details, see the documentation:
+#   https://zulip.readthedocs.io/en/latest/production/settings.html#email-gateway
 EMAIL_GATEWAY_PATTERN = ""
-#
-# If you are using local delivery, EMAIL_GATEWAY_PATTERN is all you need
-# to change in this file.  You will also need to enable the Zulip postfix
-# configuration to support local delivery by adding
-#   , zulip::postfix_localmail
-# to puppet_classes in /etc/zulip/zulip.conf and then running
-# `scripts/zulip-puppet-apply -f` to do the installation.
-#
-# You will also need to setup DNS MX records to ensure emails sent to
-# the hostname configured in EMAIL_GATEWAY_PATTERN will be delivered
-# to the Zulip postfix server you installed above.
-#
-# If you are using polling, you will need to setup an IMAP email
-# account dedicated to Zulip email gateway messages.  The model is
-# that users will send emails to that account via an address of the
-# form username+%s@example.com (which is what you will set as
-# EMAIL_GATEWAY_PATTERN); your email provider should deliver those
-# emails to the username@example.com inbox.  Then you run in a cron
-# job `./manage.py email_mirror` (see puppet/zulip/files/cron.d/email-mirror),
-# which will check that inbox and batch-process any new messages.
-#
-# You will need to configure authentication for the email mirror
-# command to access the IMAP mailbox below and in zulip-secrets.conf.
+
+# If you are using polling, edit the IMAP settings below:
 #
 # The IMAP login; username here and password as email_gateway_password in
 # zulip-secrets.conf.
@@ -445,12 +494,11 @@ AUTH_LDAP_BIND_DN = ""
 AUTH_LDAP_USER_SEARCH = LDAPSearch("ou=users,dc=example,dc=com",
                                    ldap.SCOPE_SUBTREE, "(uid=%(user)s)")
 
-# Domain to combine with a user's username to figure out their email address.
-#
-# If users log in as e.g. "sam" when their email address is "sam@example.com",
-# set this to "example.com".  If users log in with their full email addresses,
-# leave as None; if the username -> email address mapping isn't so simple,
-# leave as None and see LDAP_EMAIL_ATTR.
+# Configuration to lookup a user's LDAP data given their email address
+# (For Zulip reverse mapping).  If users log in as e.g. "sam" when
+# their email address is "sam@example.com", set LDAP_APPEND_DOMAIN to
+# "example.com".  Otherwise, leave LDAP_APPEND_DOMAIN=None and set
+# AUTH_LDAP_REVERSE_EMAIL_SEARCH and AUTH_LDAP_USERNAME_ATTR below.
 LDAP_APPEND_DOMAIN = None  # type: Optional[str]
 
 # LDAP attribute to find a user's email address.
@@ -458,6 +506,16 @@ LDAP_APPEND_DOMAIN = None  # type: Optional[str]
 # Leave as None if users log in with their email addresses,
 # or if using LDAP_APPEND_DOMAIN.
 LDAP_EMAIL_ATTR = None  # type: Optional[str]
+
+# AUTH_LDAP_REVERSE_EMAIL_SEARCH works like AUTH_LDAP_USER_SEARCH and
+# should query an LDAP user given their email address.  It and
+# AUTH_LDAP_USERNAME_ATTR are required when LDAP_APPEND_DOMAIN is None.
+#AUTH_LDAP_REVERSE_EMAIL_SEARCH = LDAPSearch("ou=users,dc=example,dc=com",
+#                                            ldap.SCOPE_SUBTREE, "(email=%(email)s)")
+
+# AUTH_LDAP_USERNAME_ATTR should be the Zulip username attribute
+# (defined in AUTH_LDAP_USER_SEARCH).
+#AUTH_LDAP_USERNAME_ATTR = "uid"
 
 # This map defines how to populate attributes of a Zulip user from LDAP.
 #
@@ -500,8 +558,8 @@ CAMO_URI = '/external_content/'
 #
 # By default, Zulip connects to rabbitmq running locally on the machine,
 # but Zulip also supports connecting to RabbitMQ over the network;
-# to use a remote RabbitMQ instance, set RABBITMQ_HOST here.
-# RABBITMQ_HOST = "localhost"
+# to use a remote RabbitMQ instance, set RABBITMQ_HOST to the hostname here.
+# RABBITMQ_HOST = "127.0.0.1"
 # To use another rabbitmq user than the default 'zulip', set RABBITMQ_USERNAME here.
 # RABBITMQ_USERNAME = 'zulip'
 
@@ -539,7 +597,7 @@ CAMO_URI = '/external_content/'
 # can modify the image's appearance.
 #THUMBNAIL_IMAGES = True
 
-# Controls the Jitsi video call integration.  By default, the
+# Controls the Jitsi Meet video call integration.  By default, the
 # integration uses the SaaS meet.jit.si server.  You can specify
 # your own Jitsi Meet server, or if you'd like to disable the
 # integration, set JITSI_SERVER_URL = None.

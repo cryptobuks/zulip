@@ -11,6 +11,7 @@ Zulip in Production
    settings
    mobile-push-notifications
    maintain-secure-upgrade
+   upgrade-or-modify
    security-model
    authentication-methods
    export-and-import
@@ -19,3 +20,4 @@ Zulip in Production
    ssl-certificates
    email
    deployment
+   email-gateway

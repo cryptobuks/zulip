@@ -1,10 +1,8 @@
-var compose_actions = (function () {
-
-var exports = {};
+const autosize = require('autosize');
 
 function update_lock_icon_for_stream(stream_name) {
-    var icon = $("#compose-lock-icon");
-    var streamfield = $("#stream_message_recipient_stream");
+    const icon = $("#compose-lock-icon");
+    const streamfield = $("#stream_message_recipient_stream");
     if (stream_data.get_invite_only(stream_name)) {
         icon.show();
         streamfield.addClass("lock-padding");
@@ -50,14 +48,14 @@ function get_focus_area(msg_type, opts) {
 exports._get_focus_area = get_focus_area;
 
 exports.set_focus = function (msg_type, opts) {
-    var focus_area = get_focus_area(msg_type, opts);
+    const focus_area = get_focus_area(msg_type, opts);
     if (focus_area === undefined) {
         return;
     }
 
     if (window.getSelection().toString() === "" ||
          opts.trigger !== "message click") {
-        var elt = $(focus_area);
+        const elt = $(focus_area);
         elt.focus().select();
     }
 };
@@ -105,9 +103,9 @@ function clear_box() {
 }
 
 exports.autosize_message_content = function () {
-    $("#compose-textarea").autosize({
+    autosize($("#compose-textarea"), {
         callback: function () {
-            compose_actions.maybe_scroll_up_selected_message();
+            exports.maybe_scroll_up_selected_message();
         },
     });
 };
@@ -129,6 +127,7 @@ exports.complete_starting_tasks = function (msg_type, opts) {
     exports.decorate_stream_bar(opts.stream);
     $(document).trigger($.Event('compose_started.zulip', opts));
     resize.resize_bottom_whitespace();
+    exports.update_placeholder_text(opts);
 };
 
 // In an attempt to decrease mixing, make the composebox's
@@ -136,7 +135,7 @@ exports.complete_starting_tasks = function (msg_type, opts) {
 // (In particular, if there's a color associated with it,
 //  have that color be reflected here too.)
 exports.decorate_stream_bar = function (stream_name) {
-    var color = stream_data.get_color(stream_name);
+    const color = stream_data.get_color(stream_name);
     update_lock_icon_for_stream(stream_name);
     $("#stream-message .message_header_stream")
         .css('background-color', color)
@@ -152,7 +151,7 @@ exports.maybe_scroll_up_selected_message = function () {
         // scroll the compose box to avoid it.
         return;
     }
-    var selected_row = current_msg_list.selected_row();
+    const selected_row = current_msg_list.selected_row();
 
     if (selected_row.height() > message_viewport.height() - 100) {
         // For very tall messages whose height is close to the entire
@@ -162,7 +161,7 @@ exports.maybe_scroll_up_selected_message = function () {
         return;
     }
 
-    var cover = selected_row.offset().top + selected_row.height()
+    const cover = selected_row.offset().top + selected_row.height()
         - $("#compose").offset().top;
     if (cover > 0) {
         message_viewport.user_initiated_animate_scroll(cover + 20);
@@ -170,7 +169,7 @@ exports.maybe_scroll_up_selected_message = function () {
 };
 
 function fill_in_opts_from_current_narrowed_view(msg_type, opts) {
-    var default_opts = {
+    let default_opts = {
         message_type: msg_type,
         stream: '',
         topic: '',
@@ -179,7 +178,7 @@ function fill_in_opts_from_current_narrowed_view(msg_type, opts) {
     };
 
     // Set default parameters based on the current narrowed view.
-    var compose_opts = narrow_state.set_compose_defaults();
+    const compose_opts = narrow_state.set_compose_defaults();
     default_opts = _.extend(default_opts, compose_opts);
     opts = _.extend(default_opts, opts);
     return opts;
@@ -193,6 +192,11 @@ function same_recipient_as_before(msg_type, opts) {
              msg_type === "private" &&
               opts.private_message_recipient === compose_state.recipient());
 }
+
+exports.update_placeholder_text = function (opts) {
+    const placeholder_text = compose_ui.compute_placeholder_text(opts);
+    $('#compose-textarea').attr('placeholder', placeholder_text);
+};
 
 exports.start = function (msg_type, opts) {
     exports.autosize_message_content();
@@ -211,6 +215,11 @@ exports.start = function (msg_type, opts) {
         opts.trigger === "new topic button") {
         opts.topic = '';
         opts.private_message_recipient = '';
+    }
+
+    const subbed_streams = stream_data.subscribed_subs();
+    if (subbed_streams.length === 1 && (opts.trigger === "new topic button" || opts.trigger === "compose_hotkey" && msg_type === "stream")) {
+        opts.stream = subbed_streams[0].name;
     }
 
     if (compose_state.composing() && !same_recipient_as_before(msg_type, opts)) {
@@ -264,13 +273,12 @@ exports.cancel = function () {
 };
 
 exports.respond_to_message = function (opts) {
-    var message;
-    var msg_type;
+    let msg_type;
     // Before initiating a reply to a message, if there's an
     // in-progress composition, snapshot it.
     drafts.update_draft();
 
-    message = current_msg_list.selected_message();
+    const message = current_msg_list.selected_message();
 
     if (message === undefined) { // empty narrow implementation
         if (!narrow_state.narrowed_by_pm_reply() &&
@@ -279,10 +287,10 @@ exports.respond_to_message = function (opts) {
             compose.nonexistent_stream_reply_error();
             return;
         }
-        var current_filter = narrow_state.filter();
-        var first_term = current_filter.operators()[0];
-        var first_operator = first_term.operator;
-        var first_operand = first_term.operand;
+        const current_filter = narrow_state.filter();
+        const first_term = current_filter.operators()[0];
+        const first_operator = first_term.operator;
+        const first_operand = first_term.operand;
 
         if (first_operator === "stream" && !stream_data.is_subscribed(first_operand)) {
             compose.nonexistent_stream_reply_error();
@@ -296,21 +304,23 @@ exports.respond_to_message = function (opts) {
             msg_type = 'private';
         }
 
-        var new_opts = fill_in_opts_from_current_narrowed_view(msg_type, opts);
+        const new_opts = fill_in_opts_from_current_narrowed_view(msg_type, opts);
         exports.start(new_opts.message_type, new_opts);
         return;
     }
 
-    unread_ops.notify_server_message_read(message);
+    if (current_msg_list.can_mark_messages_read()) {
+        unread_ops.notify_server_message_read(message);
+    }
 
-    var stream = '';
-    var topic = '';
+    let stream = '';
+    let topic = '';
     if (message.type === "stream") {
         stream = message.stream;
         topic = util.get_message_topic(message);
     }
 
-    var pm_recipient = message.reply_to;
+    let pm_recipient = message.reply_to;
     if (message.type === "private") {
         if (opts.reply_type === "personal") {
             // reply_to for private messages is everyone involved, so for
@@ -334,8 +344,8 @@ exports.respond_to_message = function (opts) {
 
 exports.reply_with_mention = function (opts) {
     exports.respond_to_message(opts);
-    var message = current_msg_list.selected_message();
-    var mention = people.get_mention_syntax(message.sender_full_name, message.sender_id);
+    const message = current_msg_list.selected_message();
+    const mention = people.get_mention_syntax(message.sender_full_name, message.sender_id);
     compose_ui.insert_syntax_and_focus(mention);
 };
 
@@ -385,9 +395,9 @@ exports.on_topic_narrow = function () {
 };
 
 exports.quote_and_reply = function (opts) {
-    var textarea = $("#compose-textarea");
-    var message_id = current_msg_list.selected_id();
-    var message = current_msg_list.selected_message();
+    const textarea = $("#compose-textarea");
+    const message_id = current_msg_list.selected_id();
+    const message = current_msg_list.selected_message();
 
     if (compose_state.has_message_content()) {
         // The user already started typing a message,
@@ -415,7 +425,7 @@ exports.quote_and_reply = function (opts) {
 
     function replace_content(raw_content) {
         compose_ui.replace_syntax('[Quoting…]', '```quote\n' + raw_content + '\n```', textarea);
-        $("#compose-textarea").trigger("autosize.resize");
+        autosize.update($('#compose-textarea'));
     }
 
     if (message && message.raw_content) {
@@ -476,10 +486,4 @@ exports.on_narrow = function (opts) {
     exports.cancel();
 };
 
-return exports;
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = compose_actions;
-}
-window.compose_actions = compose_actions;
+window.compose_actions = exports;

@@ -1,6 +1,4 @@
-var noop = function () {};
-
-var exports = {};
+const noop = function () {};
 
 exports.make_event_store = (selector) => {
     /*
@@ -14,111 +12,113 @@ exports.make_event_store = (selector) => {
        handlers.
 
     */
-    var on_functions = new Dict();
-    var child_on_functions = new Dict();
+    const on_functions = new Dict();
+    const child_on_functions = new Dict();
 
     function generic_event(event_name, arg) {
         if (typeof arg === 'function') {
             on_functions.set(event_name, arg);
         } else {
-            var handler = on_functions.get(event_name);
+            const handler = on_functions.get(event_name);
             if (!handler) {
-                var error = 'Cannot find ' + event_name + ' handler for ' + selector;
+                const error = 'Cannot find ' + event_name + ' handler for ' + selector;
                 throw Error(error);
             }
             handler(arg);
         }
     }
 
-    var self = {
+    const self = {
         generic_event: generic_event,
 
         get_on_handler: function (name, child_selector) {
-            var funcs = self.get_on_handlers(name, child_selector);
-            var handler_name = name + ' with ' + child_selector;
-            if (funcs.length === 0) {
-                throw Error('Could not find handler for ' + handler_name);
-            }
-            if (funcs.length > 1) {
-                var remedy = "\nMaybe clear zjquery between tests?";
-                throw Error('Found too many handlers for ' + handler_name + remedy);
-            }
-            return funcs[0];
-        },
+            let handler;
 
-        get_on_handlers: function (name, child_selector) {
             if (child_selector === undefined) {
-                return on_functions.get(name) || [];
+                handler = on_functions.get(name);
+                if (!handler) {
+                    throw Error('no ' + name + ' handler for ' + selector);
+                }
+                return handler;
             }
 
-            var child_on = child_on_functions.get(child_selector) || {};
-            if (!child_on) {
-                return [];
+            const child_on = child_on_functions.get(child_selector);
+            if (child_on) {
+                handler = child_on.get(name);
             }
 
-            return child_on.get(name) || [];
+            if (!handler) {
+                throw Error('no ' + name + ' handler for ' + selector + ' ' + child_selector);
+            }
+
+            return handler;
         },
 
         off: function () {
-            var event_name;
+            const event_name = arguments[0];
 
-            if (arguments.length === 2) {
-                event_name = arguments[0];
-                on_functions[event_name] = [];
-            } else if (arguments.length === 3) {
-                event_name = arguments[0];
-                var sel = arguments[1];
-                var child_on = child_on_functions.setdefault(sel, new Dict());
-                child_on[event_name] = [];
+            if (arguments.length === 1) {
+                on_functions.del(event_name);
+                return;
             }
+
+            // In the Zulip codebase we never use this form of
+            // .off in code that we test: $(...).off('click', child_sel);
+            //
+            // So we don't support this for now.
+            throw Error('zjquery does not support this call sequence');
         },
 
         on: function () {
             // parameters will either be
             //    (event_name, handler) or
             //    (event_name, sel, handler)
-            var event_name;
-            var sel;
-            var handler;
-
-            // For each event_name (or event_name/sel combo), we will store an
-            // array of functions that are mapped to the event (or event/selector).
-            //
-            // Usually funcs is an array of just one element, but not always.
-            var funcs;
+            const event_name = arguments[0];
+            let handler;
 
             if (arguments.length === 2) {
-                event_name = arguments[0];
                 handler = arguments[1];
-                funcs = on_functions.setdefault(event_name, []);
-                funcs.push(handler);
-            } else if (arguments.length === 3) {
-                event_name = arguments[0];
-                sel = arguments[1];
-                handler = arguments[2];
-                assert.equal(typeof sel, 'string', 'String selectors expected here.');
-                assert.equal(typeof handler, 'function', 'An handler function expected here.');
-                var child_on = child_on_functions.setdefault(sel, new Dict());
-                funcs = child_on.setdefault(event_name, []);
-                funcs.push(handler);
+                if (on_functions.has(event_name)) {
+                    console.info('\nEither the app or the test can be at fault here..');
+                    console.info('(sometimes you just want to call $.clear_all_elements();)\n');
+                    throw Error('dup ' + event_name + ' handler for ' + selector);
+                }
+
+                on_functions.set(event_name, handler);
+                return;
             }
+
+            if (arguments.length !== 3) {
+                throw Error('wrong number of arguments passed in');
+            }
+
+            const sel = arguments[1];
+            handler = arguments[2];
+            assert.equal(typeof sel, 'string', 'String selectors expected here.');
+            assert.equal(typeof handler, 'function', 'An handler function expected here.');
+            const child_on = child_on_functions.setdefault(sel, new Dict());
+
+            if (child_on.has(event_name)) {
+                throw Error('dup ' + event_name + ' handler for ' + selector + ' ' + sel);
+            }
+
+            child_on.set(event_name, handler);
         },
 
         trigger: function (ev) {
-            var ev_name = typeof ev === 'string' ? ev : ev.name;
-            var funcs = on_functions.get(ev_name) || [];
-            // The following assertion is temporary.  It can be
-            // legitimate for code to trigger multiple handlers.
-            // But up until now, we haven't needed this, and if
-            // you come across this assertion, it's possible that
-            // you can simplify your tests by just doing your own
-            // mocking of trigger().  If you really know what you
-            // are doing, you can remove this limitation.
-            assert(funcs.length <= 1, 'multiple functions set up');
+            const ev_name = typeof ev === 'string' ? ev : ev.name;
+            const func = on_functions.get(ev_name);
 
-            _.each(funcs, function (f) {
-                f(ev.data);
-            });
+            if (!func) {
+                // It's possible that test code will trigger events
+                // that haven't been set up yet, but we are trying to
+                // eventually deprecate trigger in our codebase, so for
+                // now we just let calls to trigger silently do nothing.
+                // (And I think actual jQuery would do the same thing.)
+                return;
+            }
+
+            func(ev.data);
         },
     };
 
@@ -126,26 +126,21 @@ exports.make_event_store = (selector) => {
 };
 
 exports.make_new_elem = function (selector, opts) {
-    var html = 'never-been-set';
-    var text = 'never-been-set';
-    var value;
-    var css;
-    var shown = false;
-    var focused = false;
-    var find_results = new Dict();
-    var my_parent;
-    var parents_result = new Dict();
-    var properties = new Dict();
-    var attrs = new Dict();
-    var classes = new Dict();
-    var event_store = exports.make_event_store(selector);
+    let html = 'never-been-set';
+    let text = 'never-been-set';
+    let value;
+    let css;
+    let shown = false;
+    let focused = false;
+    const find_results = new Dict();
+    let my_parent;
+    const parents_result = new Dict();
+    const properties = new Dict();
+    const attrs = new Dict();
+    const classes = new Dict();
+    const event_store = exports.make_event_store(selector);
 
-    var self = {
-        add_child: function () {
-            // TODO: Remove this once some in-flight PRs
-            //       get merged.
-            assert(false, 'Use set_find_results instead.');
-        },
+    const self = {
         addClass: function (class_name) {
             classes.set(class_name, true);
             return self;
@@ -164,6 +159,18 @@ exports.make_new_elem = function (selector, opts) {
         click: function (arg) {
             event_store.generic_event('click', arg);
             return self;
+        },
+        closest: function (selector) {
+            const elem = self;
+            const search = selector.startsWith('.') || selector.startsWith('#') ? selector.substring(1) : selector;
+            if (elem.selector.indexOf(search) > -1) {
+                return elem;
+            } else if (parents_result.get(selector)) {
+                return parents_result.get(selector);
+            } else if (!elem.parent()) {
+                return [];
+            }
+            return elem.parent().closest(selector);
         },
         data: noop,
         delay: function () {
@@ -191,7 +198,7 @@ exports.make_new_elem = function (selector, opts) {
         },
         fadeTo: noop,
         find: function (child_selector) {
-            var child = find_results.get(child_selector);
+            const child = find_results.get(child_selector);
             if (child) {
                 return child;
             }
@@ -219,9 +226,6 @@ exports.make_new_elem = function (selector, opts) {
         },
         get_on_handler: function (name, child_selector) {
             return event_store.get_on_handler(name, child_selector);
-        },
-        get_on_handlers: function (name, child_selector) {
-            return event_store.get_on_handlers(name, child_selector);
         },
         hasClass: function (class_name) {
             return classes.has(class_name);
@@ -272,7 +276,7 @@ exports.make_new_elem = function (selector, opts) {
             return my_parent;
         },
         parents: function (parents_selector) {
-            var result = parents_result.get(parents_selector);
+            const result = parents_result.get(parents_selector);
             assert(result, 'You need to call set_parents_result for ' +
                             parents_selector + ' in ' + selector);
             return result;
@@ -302,6 +306,9 @@ exports.make_new_elem = function (selector, opts) {
         replaceWith: function () {
             return self;
         },
+        scrollTop: function () {
+            return self;
+        },
         select: function (arg) {
             event_store.generic_event('select', arg);
             return self;
@@ -311,6 +318,9 @@ exports.make_new_elem = function (selector, opts) {
         },
         show: function () {
             shown = true;
+            return self;
+        },
+        serializeArray: function () {
             return self;
         },
         set_parent: function (parent_elem) {
@@ -360,16 +370,18 @@ exports.make_new_elem = function (selector, opts) {
 
     self.selector = selector;
 
+    self.length = 1;
+
     return self;
 };
 
 exports.make_zjquery = function (opts) {
     opts = opts || {};
 
-    var elems = {};
+    let elems = {};
 
     // Our fn structure helps us simulate extending jQuery.
-    var fn = {};
+    const fn = {};
 
     function add_extensions(obj) {
         _.each(fn, (v, k) => {
@@ -378,14 +390,53 @@ exports.make_zjquery = function (opts) {
     }
 
     function new_elem(selector) {
-        var elem = exports.make_new_elem(selector, {
+        const elem = exports.make_new_elem(selector, {
             silent: opts.silent,
         });
         add_extensions(elem);
-        return elem;
+
+        // Create a proxy handler to detect missing stubs.
+        //
+        // For context, zjquery doesn't implement every method/attribute
+        // that you'd find on a "real" jQuery object.  Sometimes we
+        // expects devs to create their own stubs.
+        const handler = {
+            get: (target, key) => {
+                // Handle the special case of equality checks, which
+                // we can infer by assert.equal trying to access the
+                // "stack" key.
+                if (key === 'stack') {
+                    const error = '\nInstead of doing equality checks on a full object, ' +
+                        'do `assert_equal(foo.selector, ".some_class")\n';
+                    throw Error(error);
+                }
+
+                const val = target[key];
+
+                if (val === undefined) {
+                    // For undefined values, we'll throw errors to devs saying
+                    // they need to create stubs.  We ignore certain keys that
+                    // are used for simply printing out the object.
+                    if (typeof key === 'symbol') {
+                        return;
+                    }
+                    if (key === 'inspect') {
+                        return;
+                    }
+
+                    throw Error('You must create a stub for $("' + selector + '").' + key);
+                }
+
+                return val;
+            },
+        };
+
+        const proxy = new Proxy(elem, handler);
+
+        return proxy;
     }
 
-    var zjquery = function (arg, arg2) {
+    const zjquery = function (arg, arg2) {
         if (typeof arg === "function") {
             // If somebody is passing us a function, we emulate
             // jQuery's behavior of running this function after
@@ -418,14 +469,14 @@ exports.make_zjquery = function (opts) {
             throw Error("We only use one-argument variations of $(...) in Zulip code.");
         }
 
-        var selector = arg;
+        const selector = arg;
 
         if (typeof selector !== "string") {
             console.info(arg);
             throw Error("zjquery does not know how to wrap this object yet");
         }
 
-        var valid_selector =
+        const valid_selector =
             '<#.'.indexOf(selector[0]) >= 0 ||
             selector === 'window-stub' ||
             selector === 'document-stub' ||
@@ -442,7 +493,7 @@ exports.make_zjquery = function (opts) {
 
 
         if (elems[selector] === undefined) {
-            var elem = new_elem(selector);
+            const elem = new_elem(selector);
             elems[selector] = elem;
         }
         return elems[selector];
@@ -451,7 +502,7 @@ exports.make_zjquery = function (opts) {
     zjquery.create = function (name)  {
         assert(!elems[name],
                'You already created an object with this name!!');
-        var elem = new_elem(name);
+        const elem = new_elem(name);
         elems[name] = elem;
         return elems[name];
     };
@@ -464,7 +515,7 @@ exports.make_zjquery = function (opts) {
 
     zjquery.state = function () {
         // useful for debugging
-        var res =  _.map(elems, function (v) {
+        let res =  _.map(elems, function (v) {
             return v.debug();
         });
 
@@ -496,5 +547,3 @@ exports.make_zjquery = function (opts) {
 
     return zjquery;
 };
-
-module.exports = exports;

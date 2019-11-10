@@ -1,7 +1,10 @@
-# JavaScript unit tests
+# JavaScript/TypeScript unit tests
 
-As an alternative to the black-box whole-app testing, you can unit test
-individual JavaScript files.
+Our node-based unit tests system is the preferred way to test
+JavaScript/TypeScript code in Zulip.  We prefer it over the [Casper
+black-box whole-app testing](../testing/testing-with-casper.md),
+system since it is much (>100x) faster and also easier to do correctly
+than the Casper system.
 
 You can run tests as follow:
 ```
@@ -36,32 +39,59 @@ see if there are corresponding test in `frontend_tests/node_tests`.  If
 there are, you should strive to follow the patterns of the existing tests
 and add your own tests.
 
-## Coverage reports
+## How the node tests work
 
-You can automatically generate coverage reports for the JavaScript unit
-tests like this:
+Unlike the [casper unit tests](../testing/testing-with-casper.md),
+which use the `phantomjs` browser connected to a running Zulip
+deveopment server, our node unit tests don't have a browser, don't
+talk to a server, and generally don't use a complete virtual DOM (a
+handful of tests use the `jsdom` library for this purpose) because
+those slow down the tests a lot, and often don't add much value.
 
-```
-    tools/test-js-with-node --coverage
-```
+Instead, the preferred model for our unit tests is to mock DOM
+manipulations (which in Zulip are almost exclusively done via
+`jQuery`) using a custom library
+[zjquery](https://github.com/zulip/zulip/blob/master/frontend_tests/zjsunit/zjquery.js).
 
-If tests pass, you will get instructions to view coverage reports
-in your browser.
+The
+[unit test file](https://github.com/zulip/zulip/blob/master/frontend_tests/node_tests/zjquery.js)
+for `zjquery` is designed to be also serve as nice documentation for
+how to use `zjquery`, and is **highly recommended reading** for anyone
+working on or debugging the Zulip node tests.
 
-Note that modules that
-we don't test *at all* aren't listed in the report, so this tends to
-overstate how good our overall coverage is, but it's accurate for
-individual files. You can also click a filename to see the specific
-statements and branches not tested. 100% branch coverage isn't
-necessarily possible, but getting to at least 80% branch coverage is a
-good goal.
+Conceptually, the `zjquery` library provides minimal versions of most
+`jQuery` DOM manipulation functions, and has a convenient system for
+letting you setup return values for more complex functions.  For
+example, if the code you'd like to test calls `$obj.find()`, you can
+use `$obj.set_find_results(selector, $value)` to setup `zjquery` so
+that calls to `$obj.find(selector)` will return `$value`. See the unit
+test file for details.
+
+This process of substituting `jQuery` functions with our own code for
+testing purposes is known as "stubbing". `zjquery` does not stub all
+possible interactions with the dom, as such, you may need to write out
+the stub for a function you're calling in your patch. Typically the stub
+is just placed in the test file, to prevent bloating of `zjquery`
+with functions that are only used in a single test.
+
+If you need to stub, you will see an error of this form:
+`Error: You must create a stub for $("#foo").bar`
+
+The `zjquery` library itself is only about 500 lines of code, and can
+also be a useful resource if you're having trouble debugging DOM
+access in the unit tests.
+
+It is typically a good idea to figure out how to stub a given function
+based on how other functions have been stubbed in the same file.
 
 ## Handling dependencies in unit tests
 
-The following scheme helps avoid tests leaking globals between each
-other.
-
-You want to categorize each module as follows:
+The other big challenge with doing unit tests for a JavaScript project
+is that often one wants to limit the scope the production code being
+run, just to avoid doing extra setup work that isn't relevant to the
+code you're trying to test.  For that reason, each unit test file
+explicitly declares all of the modules it depends on, with a few
+different types of declarations depending on whether we want to:
 
 -   Exercise the module's real code for deeper, more realistic testing?
 -   Stub out the module's interface for more control, speed, and
@@ -75,8 +105,8 @@ like the following toward the top of your test file:
 >     zrequire('stream_data');
 >     zrequire('Filter', 'js/filter');
 
-For modules that you want to completely stub out, please use a pattern
-like this:
+For modules that you want to completely stub out, use a pattern like
+this:
 
 >     set_global('page_params', {
 >         email: 'bob@zulip.com'
@@ -85,17 +115,20 @@ like this:
 >     // then maybe further down
 >     page_params.email = 'alice@zulip.com';
 
-Finally, there's the hybrid situation, where you want to borrow some of
-a module's real functionality but stub out other pieces. Obviously, this
-is a pretty strong smell that the other module might be lacking in
-cohesion, but that code might be outside your jurisdiction. The pattern
-here is this:
+One can similarly stub out functions in a module's exported interface
+with either `noop` functions or actual code.
+
+Finally, there's the hybrid situation, where you want to borrow some
+of a module's real functionality but stub out other pieces. Obviously,
+this is a pretty strong code smell that the other module might be
+lacking in cohesion, but sometimes it's not worth going down the
+rabbit hole of trying to improve that. The pattern here is this:
 
 >     // Import real code.
->     zrequire('narrow');
+>     zrequire('narrow_state');
 >
 >     // And later...
->     narrow.stream = function () {
+>     narrow_state.stream = function () {
 >         return 'office';
 >     };
 
@@ -116,3 +149,83 @@ is at the bottom of `foobar.js`:
 This means `foobar.js` follow the CommonJS module pattern, so it can be
 required in Node.js, which runs our tests.
 
+## Coverage reports
+
+You can automatically generate coverage reports for the JavaScript unit
+tests like this:
+
+```
+    tools/test-js-with-node --coverage
+```
+
+If tests pass, you will get instructions to view coverage reports
+in your browser.
+
+Note that modules that we don't test *at all* aren't listed in the
+report, so this tends to overstate how good our overall coverage is,
+but it's accurate for individual files. You can also click a filename
+to see the specific statements and branches not tested. 100% branch
+coverage isn't necessarily possible, but getting to at least 80%
+branch coverage is a good goal.
+
+The overall project goal is to get to 100% node test coverage on all
+data/logic modules (UI modules are lower priority for unit testing).
+
+# Editor debugger integration
+
+Our node test system is pretty simple, and it's possible to configure
+the native debugger features of popular editors to allow stepping
+through the code.  Below we document the editors where someone has put
+together detailed instructions for how to do so.  Contributions of
+notes for other editors are welcome!
+
+## Webstorm integration setup
+
+These instructions assume you're using the Vagrant development environment.
+
+1. Setup [Vagrant in WebStorm][vagrant-webstorm].
+
+2. In WebStorm, navigate to `Preferences -> Tools -> Vagrant` and
+   configure the following:
+
+    * `Instance folder` should be the root of the `zulip` repository on
+      your host (where the Vagrantfile is located).
+    * `Provider` should be `virtualbox` on macOS and Docker on Linux
+    * In `Boxes`, choose the one used for Zulip (unless you use
+      Virtualbox for other things, there should only be one option).
+
+    You shouldn't need to set these additional settings:
+    * `Vagrant executable` should already be correctly `vagrant`.
+    * `Environment Variables` is not needed.
+
+3. You'll now need to set up a WebStorm "Debug Configuration".  Open
+   the `Run/Debug Configuration` menu and create a new `Node.js` config:
+    1. Under `Node interpreter:` click the 3 dots to the right side and
+      click on the little plus in the bottom left of the `Node.js
+      Interpreters` window.
+    1. Select `Add Remote...`.
+        1. In the `Configure Node.js Remote Interpreter`, window select `Vagrant`
+        1. Wait for WebStorm to connect to Vagrant. This will be displayed
+           by the `Vagrant Host URL` section updating to contain the Vagrant
+           SSH url, e.g. `ssh://vagrant@127.0.0.1:2222`.
+        1. **Set the `Node.js interpreter path` to `/usr/local/bin/node`**
+        1. Hit `OK` 2 times to get back to the `Run/Debug Configurations` window.
+    1. Under `Working Directory` select the root `zulip` directory.
+    1. Under `JavaScript file`, enter `frontend_tests/zjsunit/index.js`
+     -- this is the root script for Zulip's node unit tests.
+
+Congratulations!  You've now setup the integration.
+
+## Running tests with the debugger
+
+To use Webstorm to debug a given node test file, do the following:
+
+1. Under `Application parameters` choose the node test file that you
+   are trying to test (e.g. `frontend_tests/node_tests/message_store.js`).
+1. Under `Path Mappings`, set `Project Root` to `/srv/zulip`
+   (i.e. where the `zulip` Git repository is mounted in the Vagrant guest).
+1. Use the WebStorm debugger; see [this overview][webstorm-debugging]
+   for details on how to use it.
+
+[webstorm-debugging]: https://blog.jetbrains.com/webstorm/2018/01/how-to-debug-with-webstorm/
+[vagrant-webstorm]: https://www.jetbrains.com/help/webstorm/vagrant-support.html?section=Windows%20or%20Linux

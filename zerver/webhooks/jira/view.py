@@ -1,6 +1,7 @@
 # Webhooks for external integrations.
 import re
-from typing import Any, Dict, List, Optional
+import string
+from typing import Any, Dict, List, Optional, Callable
 
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse
@@ -13,9 +14,7 @@ from zerver.lib.webhooks.common import check_send_webhook_message, \
 from zerver.models import Realm, UserProfile, get_user_by_delivery_email
 
 IGNORED_EVENTS = [
-    'comment_deleted',  # we handle issue_update event instead
     'issuelink_created',
-    'comment_updated',
     'attachment_created',
     'issuelink_deleted',
     'sprint_started',
@@ -67,7 +66,7 @@ def convert_jira_markup(content: str, realm: Realm) -> str:
     content = re.sub(r'\[([^\|~]+?)\]', r'[\1](\1)', content)
 
     # Full links which have a | are converted into a better markdown link
-    full_link_re = re.compile(r'\[(?:(?P<title>[^|~]+)\|)(?P<url>.*)\]')
+    full_link_re = re.compile(r'\[(?:(?P<title>[^|~]+)\|)(?P<url>[^\]]*)\]')
     content = re.sub(full_link_re, r'[\g<title>](\g<url>)', content)
 
     # Try to convert a JIRA user mention of format [~username] into a
@@ -95,18 +94,23 @@ def get_in(payload: Dict[str, Any], keys: List[str], default: str='') -> Any:
         return default
     return payload
 
-def get_issue_string(payload: Dict[str, Any], issue_id: Optional[str]=None) -> str:
+def get_issue_string(payload: Dict[str, Any], issue_id: Optional[str]=None, with_title: bool=False) -> str:
     # Guess the URL as it is not specified in the payload
     # We assume that there is a /browse/BUG-### page
     # from the REST url of the issue itself
     if issue_id is None:
         issue_id = get_issue_id(payload)
 
+    if with_title:
+        text = "{}: {}".format(issue_id, get_issue_title(payload))
+    else:
+        text = issue_id
+
     base_url = re.match(r"(.*)\/rest\/api/.*", get_in(payload, ['issue', 'self']))
     if base_url and len(base_url.groups()):
-        return u"[{}]({}/browse/{})".format(issue_id, base_url.group(1), issue_id)
+        return u"[{}]({}/browse/{})".format(text, base_url.group(1), issue_id)
     else:
-        return issue_id
+        return text
 
 def get_assignee_mention(assignee_email: str, realm: Realm) -> str:
     if assignee_email != '':
@@ -157,7 +161,7 @@ def handle_updated_issue_event(payload: Dict[str, Any], user_profile: UserProfil
     # into this one 'updated' event type, so we try to extract the meaningful
     # event that happened
     issue_id = get_in(payload, ['issue', 'key'])
-    issue = get_issue_string(payload, issue_id)
+    issue = get_issue_string(payload, issue_id, True)
 
     assignee_email = get_in(payload, ['issue', 'fields', 'assignee', 'emailAddress'], '')
     assignee_mention = get_assignee_mention(assignee_email, user_profile.realm)
@@ -170,24 +174,26 @@ def handle_updated_issue_event(payload: Dict[str, Any], user_profile: UserProfil
     sub_event = get_sub_event_for_update_issue(payload)
     if 'comment' in sub_event:
         if sub_event == 'issue_commented':
-            verb = 'added comment to'
+            verb = 'commented on'
         elif sub_event == 'issue_comment_edited':
-            verb = 'edited comment on'
+            verb = 'edited a comment on'
         else:
-            verb = 'deleted comment from'
+            verb = 'deleted a comment from'
 
         if payload.get('webhookEvent') == 'comment_created':
             author = payload['comment']['author']['displayName']
         else:
             author = get_issue_author(payload)
 
-        content = u"{} **{}** {}{}".format(author, verb, issue, assignee_blurb)
+        content = u"{} {} {}{}".format(author, verb, issue, assignee_blurb)
         comment = get_in(payload, ['comment', 'body'])
         if comment:
             comment = convert_jira_markup(comment, user_profile.realm)
-            content = u"{}:\n\n\n{}\n".format(content, comment)
+            content = u"{}:\n\n``` quote\n{}\n```".format(content, comment)
+        else:
+            content = "{}.".format(content)
     else:
-        content = u"{} **updated** {}{}:\n\n".format(get_issue_author(payload), issue, assignee_blurb)
+        content = u"{} updated {}{}:\n\n".format(get_issue_author(payload), issue, assignee_blurb)
         changelog = get_in(payload, ['changelog'])
 
         if changelog != '':
@@ -215,23 +221,75 @@ def handle_updated_issue_event(payload: Dict[str, Any], user_profile: UserProfil
     return content
 
 def handle_created_issue_event(payload: Dict[str, Any], user_profile: UserProfile) -> str:
-    return u"{} **created** {} priority {}, assigned to **{}**:\n\n> {}".format(
-        get_issue_author(payload),
-        get_issue_string(payload),
-        get_in(payload, ['issue', 'fields', 'priority', 'name']),
-        get_in(payload, ['issue', 'fields', 'assignee', 'displayName'], 'no one'),
-        get_issue_title(payload)
+    template = """
+{author} created {issue_string}:
+
+* **Priority**: {priority}
+* **Assignee**: {assignee}
+""".strip()
+
+    return template.format(
+        author=get_issue_author(payload),
+        issue_string=get_issue_string(payload, with_title=True),
+        priority=get_in(payload, ['issue', 'fields', 'priority', 'name']),
+        assignee=get_in(payload, ['issue', 'fields', 'assignee', 'displayName'], 'no one')
     )
 
 def handle_deleted_issue_event(payload: Dict[str, Any], user_profile: UserProfile) -> str:
-    return u"{} **deleted** {}!".format(get_issue_author(payload), get_issue_string(payload))
+    template = "{author} deleted {issue_string}{punctuation}"
+    title = get_issue_title(payload)
+    punctuation = '.' if title[-1] not in string.punctuation else ''
+    return template.format(
+        author=get_issue_author(payload),
+        issue_string=get_issue_string(payload, with_title=True),
+        punctuation=punctuation
+    )
+
+def normalize_comment(comment: str) -> str:
+    # Here's how Jira escapes special characters in their payload:
+    # ,.?\\!\n\"'\n\\[]\\{}()\n@#$%^&*\n~`|/\\\\
+    # for some reason, as of writing this, ! has two '\' before it.
+    normalized_comment = comment.replace("\\!", "!")
+    return normalized_comment
+
+def handle_comment_created_event(payload: Dict[str, Any], user_profile: UserProfile) -> str:
+    return "{author} commented on issue: *\"{title}\"\
+*\n``` quote\n{comment}\n```\n".format(
+        author = payload["comment"]["author"]["displayName"],
+        title = payload["issue"]["fields"]["summary"],
+        comment = normalize_comment(payload["comment"]["body"])
+    )
+
+def handle_comment_updated_event(payload: Dict[str, Any], user_profile: UserProfile) -> str:
+    return "{author} updated their comment on issue: *\"{title}\"\
+*\n``` quote\n{comment}\n```\n".format(
+        author = payload["comment"]["author"]["displayName"],
+        title = payload["issue"]["fields"]["summary"],
+        comment = normalize_comment(payload["comment"]["body"])
+    )
+
+def handle_comment_deleted_event(payload: Dict[str, Any], user_profile: UserProfile) -> str:
+    return "{author} deleted their comment on issue: *\"{title}\"\
+*\n``` quote\n~~{comment}~~\n```\n".format(
+        author = payload["comment"]["author"]["displayName"],
+        title = payload["issue"]["fields"]["summary"],
+        comment = normalize_comment(payload["comment"]["body"])
+    )
 
 JIRA_CONTENT_FUNCTION_MAPPER = {
     "jira:issue_created": handle_created_issue_event,
     "jira:issue_deleted": handle_deleted_issue_event,
     "jira:issue_updated": handle_updated_issue_event,
-    "comment_created": handle_updated_issue_event
+    "comment_created": handle_comment_created_event,
+    "comment_updated": handle_comment_updated_event,
+    "comment_deleted": handle_comment_deleted_event,
 }
+
+def get_event_handler(event: Optional[str]) -> Optional[Callable[..., str]]:
+    if event is None:
+        return None
+
+    return JIRA_CONTENT_FUNCTION_MAPPER.get(event)
 
 @api_key_only_webhook_view("JIRA")
 @has_request_variables
@@ -244,10 +302,9 @@ def api_jira_webhook(request: HttpRequest, user_profile: UserProfile,
     if event in IGNORED_EVENTS:
         return json_success()
 
-    if event is not None:
-        content_func = JIRA_CONTENT_FUNCTION_MAPPER.get(event)  # type: Any
+    content_func = get_event_handler(event)
 
-    if subject is None or content_func is None:
+    if content_func is None:
         raise UnexpectedWebhookEventType('Jira', event)
 
     content = content_func(payload, user_profile)  # type: str

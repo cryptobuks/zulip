@@ -1,11 +1,7 @@
-var Dict = require('./dict').Dict;
+const Dict = require('./dict').Dict;
 
-var user_status = (function () {
-
-var exports = {};
-
-var away_user_ids = new Dict();
-var user_info = new Dict();
+const away_user_ids = new Dict();
+const user_info = new Dict();
 
 exports.server_update = function (opts) {
     channel.post({
@@ -70,10 +66,4 @@ exports.initialize = function () {
     delete page_params.user_status;
 };
 
-return exports;
-
-}());
-if (typeof module !== 'undefined') {
-    module.exports = user_status;
-}
-window.user_status = user_status;
+window.user_status = exports;

@@ -19,13 +19,13 @@ git clone https://github.com/zulip/zulip.git zulip-server-git
 
 and then
 [continue the normal installation instructions](../production/install.html#step-2-install-zulip).
-You can also [upgrade Zulip from Git](../production/maintain-secure-upgrade.html#upgrading-from-a-git-repository).
+You can also [upgrade Zulip from Git](../production/upgrade-or-modify.html#upgrading-from-a-git-repository).
 
 ## Zulip in Docker
 
 Zulip has an officially supported, experimental
 [docker image](https://github.com/zulip/docker-zulip).  Please note
-that Zulip's [normal installer](../production/install.html) has been
+that Zulip's [normal installer](../production/install.md) has been
 extremely reliable for years, whereas the Docker image is new and has
 rough edges, so we recommend the normal installer unless you have a
 specific reason to prefer Docker.
@@ -50,7 +50,7 @@ can do the following after unpacking a Zulip production release
 tarball:
 
 ```
-env PUPPET_CLASSES=zulip::redis ./scripts/setup/install
+env PUPPET_CLASSES=zulip::base,zulip::apt_repository,zulip::redis ./scripts/setup/install
 ```
 
 You can see most likely manifests you might want to choose in the list
@@ -64,12 +64,38 @@ of managing chat.zulip.org and zulipchat.com.
 
 ### Using Zulip with Amazon RDS as the database
 
-Unfortunately, you cannot use most third-party database-as-a-service
-provides like Amazon RDS as the database provider with Zulip without a
-degraded experience.  Zulip let you choose one of two
-[full-text search postgres extensions](../subsystems/full-text-search.html).
-Neither is available in Amazon RDS.  As a result, if you use one of
-those providers, Zulip's full-text search will be unavailable.
+You cannot use most third-party database-as-a-service provides like
+Amazon RDS as the database provider with Zulip, because Zulip requires
+one of two different [full-text search postgres
+extensions](../subsystems/full-text-search.md) to power its search.
+Neither is available in Amazon RDS; there should be no issue with
+using Zulip with a different database-as-a-service provider as long as
+one of those postgres extensions is available.
+
+## Using an alternate port
+
+If you'd like your Zulip server to use an HTTPS port other than 443, you can
+configure that as follows:
+
+1. Edit `EXTERNAL_HOST` in `/etc/zulip/settings.py`, which controls how
+   the Zulip server reports its own URL, and restart the Zulip server
+   with `/home/zulip/deployments/current/scripts/restart-server`.
+1. Add the following block to `/etc/zulip/zulip.conf`:
+
+    ```
+    [application_server]
+    nginx_listen_port = 12345
+    ```
+
+1. As root, run
+  `/home/zulip/deployments/current/scripts/zulip-puppet-apply`.  This
+  will convert Zulip's main `nginx` configuration file to use your new
+  port.
+
+We also have documentation for a Zulip server [using HTTP][using-http] for use
+behind reverse proxies.
+
+[using-http]: ../production/deployment.html#configuring-zulip-to-allow-http
 
 ## Putting the Zulip application behind a reverse proxy
 

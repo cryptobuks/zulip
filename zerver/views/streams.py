@@ -21,7 +21,7 @@ from zerver.lib.actions import bulk_remove_subscriptions, \
     do_create_default_stream_group, do_add_streams_to_default_stream_group, \
     do_remove_streams_from_default_stream_group, do_remove_default_stream_group, \
     do_change_default_stream_group_description, do_change_default_stream_group_name, \
-    prep_stream_welcome_message, do_change_stream_announcement_only, \
+    do_change_stream_announcement_only, \
     do_delete_messages
 from zerver.lib.response import json_success, json_error
 from zerver.lib.streams import access_stream_by_id, access_stream_by_name, \
@@ -30,8 +30,7 @@ from zerver.lib.streams import access_stream_by_id, access_stream_by_name, \
 from zerver.lib.topic import get_topic_history_for_stream, messages_for_topic
 from zerver.lib.validator import check_string, check_int, check_list, check_dict, \
     check_bool, check_variable_type, check_capped_string, check_color, check_dict_only
-from zerver.models import UserProfile, Stream, \
-    UserMessage, \
+from zerver.models import UserProfile, Stream, Realm, UserMessage, \
     get_system_bot, get_active_user
 
 from collections import defaultdict
@@ -181,8 +180,16 @@ def update_stream_backend(
         do_change_stream_invite_only(stream, is_private, history_public_to_subscribers)
     return json_success()
 
-def list_subscriptions_backend(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:
-    return json_success({"subscriptions": gather_subscriptions(user_profile)[0]})
+@has_request_variables
+def list_subscriptions_backend(
+    request: HttpRequest,
+    user_profile: UserProfile,
+    include_subscribers: bool=REQ(validator=check_bool, default=False),
+) -> HttpResponse:
+    subscribed, _ = gather_subscriptions(
+        user_profile, include_subscribers=include_subscribers
+    )
+    return json_success({"subscriptions": subscribed})
 
 FuncKwargPair = Tuple[Callable[..., HttpResponse], Dict[str, Union[int, Iterable[Any]]]]
 
@@ -250,7 +257,7 @@ def remove_subscriptions_backend(
     else:
         people_to_unsub = set([user_profile])
 
-    result = dict(removed=[], not_subscribed=[])  # type: Dict[str, List[str]]
+    result = dict(removed=[], not_removed=[])  # type: Dict[str, List[str]]
     (removed, not_subscribed) = bulk_remove_subscriptions(people_to_unsub, streams,
                                                           request.client,
                                                           acting_user=user_profile)
@@ -258,7 +265,7 @@ def remove_subscriptions_backend(
     for (subscriber, removed_stream) in removed:
         result["removed"].append(removed_stream.name)
     for (subscriber, not_subscribed_stream) in not_subscribed:
-        result["not_subscribed"].append(not_subscribed_stream.name)
+        result["not_removed"].append(not_subscribed_stream.name)
 
     return json_success(result)
 
@@ -266,12 +273,12 @@ def you_were_just_subscribed_message(acting_user: UserProfile,
                                      stream_names: Set[str]) -> str:
     subscriptions = sorted(list(stream_names))
     if len(subscriptions) == 1:
-        return _("Hi there! @**%(full_name)s** just subscribed you to the stream #**%(stream_name)s**." %
-                 {"full_name": acting_user.full_name,
-                  "stream_name": subscriptions[0]})
+        return _("@**%(full_name)s** subscribed you to the stream #**%(stream_name)s**.") % \
+            {"full_name": acting_user.full_name,
+             "stream_name": subscriptions[0]}
 
-    message = _("Hi there! @**%(full_name)s** just subscribed you to the following streams:" %
-                {"full_name": acting_user.full_name})
+    message = _("@**%(full_name)s** subscribed you to the following streams:") % \
+        {"full_name": acting_user.full_name}
     message += "\n\n"
     for stream_name in subscriptions:
         message += "* #**%s**\n" % (stream_name,)
@@ -332,6 +339,12 @@ def add_subscriptions_backend(
         if user_profile.realm.is_zephyr_mirror_realm and not all(stream.invite_only for stream in streams):
             return json_error(_("You can only invite other Zephyr mirroring users to private streams."))
         if not user_profile.can_subscribe_other_users():
+            if user_profile.realm.invite_to_stream_policy == Realm.INVITE_TO_STREAM_POLICY_ADMINS:
+                return json_error(_("Only administrators can modify other users' subscriptions."))
+            # Realm.INVITE_TO_STREAM_POLICY_MEMBERS only fails if the
+            # user is a guest, which happens in the decorator above.
+            assert user_profile.realm.invite_to_stream_policy == \
+                Realm.INVITE_TO_STREAM_POLICY_WAITING_PERIOD
             return json_error(_("Your account is too new to modify other users' subscriptions."))
         subscribers = set(principal_to_user_profile(user_profile, principal) for principal in principals)
     else:
@@ -387,18 +400,20 @@ def add_subscriptions_backend(
                     recipient_user=email_to_user_profile[email],
                     content=msg))
 
-    if announce and len(created_streams) > 0 and settings.NOTIFICATION_BOT is not None:
+    if announce and len(created_streams) > 0:
         notifications_stream = user_profile.realm.get_notifications_stream()
         if notifications_stream is not None:
             if len(created_streams) > 1:
-                stream_strs = ", ".join('#**%s**' % s.name for s in created_streams)
-                stream_msg = "the following streams: %s" % (stream_strs,)
+                content = _("@_**%(user_name)s|%(user_id)d** created the following streams: %(stream_str)s.")
             else:
-                stream_msg = "a new stream #**%s**." % created_streams[0].name
-            msg = ("@_**%s|%d** just created %s" % (user_profile.full_name, user_profile.id, stream_msg))
+                content = _("@_**%(user_name)s|%(user_id)d** created a new stream %(stream_str)s.")
+            content = content % {
+                'user_name': user_profile.full_name,
+                'user_id': user_profile.id,
+                'stream_str': ", ".join('#**%s**' % (s.name,) for s in created_streams)}
 
             sender = get_system_bot(settings.NOTIFICATION_BOT)
-            topic = 'Streams'
+            topic = _('new streams')
 
             notifications.append(
                 internal_prep_stream_message(
@@ -406,16 +421,27 @@ def add_subscriptions_backend(
                     sender=sender,
                     stream=notifications_stream,
                     topic=topic,
-                    content=msg,
+                    content=content,
                 )
             )
 
-    if not user_profile.realm.is_zephyr_mirror_realm:
+    if not user_profile.realm.is_zephyr_mirror_realm and len(created_streams) > 0:
+        sender = get_system_bot(settings.NOTIFICATION_BOT)
         for stream in created_streams:
-            notifications.append(prep_stream_welcome_message(stream))
+            notifications.append(
+                internal_prep_stream_message(
+                    realm=user_profile.realm,
+                    sender=sender,
+                    stream=stream,
+                    topic=Realm.STREAM_EVENTS_NOTIFICATION_TOPIC,
+                    content=_('Stream created by @_**%(user_name)s|%(user_id)d**.') % {
+                        'user_name': user_profile.full_name,
+                        'user_id': user_profile.id}
+                )
+            )
 
     if len(notifications) > 0:
-        do_send_messages(notifications)
+        do_send_messages(notifications, mark_as_read=[user_profile.id])
 
     result["subscribed"] = dict(result["subscribed"])
     result["already_subscribed"] = dict(result["already_subscribed"])
@@ -453,7 +479,8 @@ def get_streams_backend(
 
 @has_request_variables
 def get_topics_backend(request: HttpRequest, user_profile: UserProfile,
-                       stream_id: int=REQ(converter=to_non_negative_int)) -> HttpResponse:
+                       stream_id: int=REQ(converter=to_non_negative_int,
+                                          path_only=True)) -> HttpResponse:
     (stream, recipient, sub) = access_stream_by_id(user_profile, stream_id)
 
     result = get_topic_history_for_stream(
@@ -544,10 +571,11 @@ def update_subscription_properties_backend(
 
     Requests are of the form:
 
-    [{"stream_id": "1", "property": "in_home_view", "value": False},
+    [{"stream_id": "1", "property": "is_muted", "value": False},
      {"stream_id": "1", "property": "color", "value": "#c2c2c2"}]
     """
     property_converters = {"color": check_color, "in_home_view": check_bool,
+                           "is_muted": check_bool,
                            "desktop_notifications": check_bool,
                            "audible_notifications": check_bool,
                            "push_notifications": check_bool,

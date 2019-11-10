@@ -1,4 +1,4 @@
-var common = require('../casper_lib/common.js').common;
+var common = require('../casper_lib/common.js');
 
 common.start_and_log_in();
 
@@ -157,6 +157,28 @@ function expect_all_pm() {
     });
 }
 
+function expect_non_existing_user() {
+    casper.then(function () {
+        casper.waitUntilVisible('#non_existing_user', function () {
+            casper.test.info("Empty feed for non existing user visible.");
+            var expected_message = "\n        This user does not exist!" +
+                "\n    ";
+            this.test.assertEquals(casper.fetchText('#non_existing_user'), expected_message);
+        });
+    });
+}
+
+function expect_non_existing_users() {
+    casper.then(function () {
+        casper.waitUntilVisible('#non_existing_users', function () {
+            casper.test.info("Empty feed for non existing user visible.");
+            var expected_message = "\n        One or more of these users do not exist!" +
+                "\n    ";
+            this.test.assertEquals(casper.fetchText('#non_existing_users'), expected_message);
+        });
+    });
+}
+
 function check_narrow_title(title) {
     return function () {
         // need to get title tag from HTML
@@ -193,14 +215,7 @@ function search_silent_user(str, item) {
 
 function search_non_existing_user(str, item) {
     common.select_item_via_typeahead('#search_query', str, item);
-    casper.then(function () {
-        casper.waitUntilVisible('#non_existing_user', function () {
-            casper.test.info("Empty feed for non existing user visible.");
-            var expected_message = "\n        This user does not exist!" +
-                                    "\n    ";
-            this.test.assertEquals(casper.fetchText('#non_existing_user'), expected_message);
-        });
-    });
+    expect_non_existing_user();
     un_narrow();
 }
 
@@ -245,7 +260,7 @@ casper.then(function () {
 
 expect_huddle();
 
-casper.then(check_narrow_title('private - Zulip Dev - Zulip'));
+casper.then(check_narrow_title('Cordelia Lear, King Hamlet - Zulip Dev - Zulip'));
 
 casper.then(function () {
     // Un-narrow by clicking "Zulip"
@@ -261,7 +276,7 @@ search_and_check('Verona', 'Stream', expect_stream,
                  'Verona - Zulip Dev - Zulip');
 
 search_and_check('Cordelia', 'Private', expect_1on1,
-                 'private - Zulip Dev - Zulip');
+                 'Cordelia Lear - Zulip Dev - Zulip');
 
 // Test operators
 search_and_check('stream:Verona', '', expect_stream,
@@ -279,6 +294,11 @@ search_and_check('subject:frontend+test', '', expect_subject,
 search_silent_user('sender:emailgateway@zulip.com', '');
 
 search_non_existing_user('sender:dummyuser@zulip.com', '');
+
+search_and_check('pm-with:dummyuser@zulip.com', '', expect_non_existing_user, 'Invalid user');
+
+search_and_check('pm-with:dummyuser@zulip.com,dummyuser2@zulip.com', '', expect_non_existing_users,
+                 'Invalid users');
 
 // Narrow by clicking the left sidebar.
 casper.then(function () {
@@ -300,7 +320,7 @@ casper.thenClick('.top_left_private_messages a');
 
 expect_all_pm();
 
-casper.then(check_narrow_title('private - Zulip Dev - Zulip'));
+casper.then(check_narrow_title('Private messages - Zulip Dev - Zulip'));
 
 un_narrow();
 

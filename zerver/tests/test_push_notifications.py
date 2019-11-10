@@ -1,4 +1,3 @@
-
 from contextlib import contextmanager
 import datetime
 import itertools
@@ -15,6 +14,7 @@ import uuid
 from django.test import override_settings
 from django.conf import settings
 from django.http import HttpResponse
+from django.db import transaction
 from django.db.models import F
 from django.utils.crypto import get_random_string
 from django.utils.timezone import utc as timezone_utc
@@ -31,7 +31,9 @@ from zerver.models import (
     receives_stream_notifications,
     get_client,
     get_realm,
+    get_stream,
     Recipient,
+    RealmAuditLog,
     Stream,
     Subscription,
 )
@@ -66,7 +68,7 @@ from zerver.lib.test_classes import (
 )
 
 from zilencer.models import RemoteZulipServer, RemotePushDeviceToken, \
-    RemoteRealmCount, RemoteInstallationCount
+    RemoteRealmCount, RemoteInstallationCount, RemoteRealmAuditLog
 from django.utils.timezone import now
 
 ZERVER_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -136,7 +138,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
         result = self.api_post(self.example_email("hamlet"), endpoint, {'token': token,
                                                                         'user_id': 15,
                                                                         'token_kind': token_kind},
-                               realm="")
+                               subdomain="")
         self.assert_json_error(result, "Must validate with valid Zulip server API key")
 
     def test_register_remote_push_user_paramas(self) -> None:
@@ -239,11 +241,11 @@ class PushBouncerNotificationTest(BouncerTestCase):
 
     @override_settings(PUSH_NOTIFICATION_BOUNCER_URL='https://push.zulip.org.example.com')
     @mock.patch('zerver.lib.push_notifications.requests.request')
-    def test_push_bouncer_api(self, mock: Any) -> None:
+    def test_push_bouncer_api(self, mock_request: Any) -> None:
         """This is a variant of the below test_push_api, but using the full
         push notification bouncer flow
         """
-        mock.side_effect = self.bounce_request
+        mock_request.side_effect = self.bounce_request
         user = self.example_user('cordelia')
         email = user.email
         self.login(email)
@@ -310,71 +312,120 @@ class AnalyticsBouncerTest(BouncerTestCase):
 
     @override_settings(PUSH_NOTIFICATION_BOUNCER_URL='https://push.zulip.org.example.com')
     @mock.patch('zerver.lib.push_notifications.requests.request')
-    def test_analytics_api(self, mock: Any) -> None:
+    def test_analytics_api(self, mock_request: Any) -> None:
         """This is a variant of the below test_push_api, but using the full
         push notification bouncer flow
         """
-        mock.side_effect = self.bounce_request
+        mock_request.side_effect = self.bounce_request
         user = self.example_user('hamlet')
         end_time = self.TIME_ZERO
 
+        # Send any existing data over, so that we can start the test with a "clean" slate
+        audit_log_max_id = RealmAuditLog.objects.all().order_by('id').last().id
+        send_analytics_to_remote_server()
+        self.assertEqual(mock_request.call_count, 2)
+        remote_audit_log_count = RemoteRealmAuditLog.objects.count()
+        self.assertEqual(RemoteRealmCount.objects.count(), 0)
+        self.assertEqual(RemoteInstallationCount.objects.count(), 0)
+
+        def check_counts(mock_request_call_count: int, remote_realm_count: int,
+                         remote_installation_count: int, remote_realm_audit_log: int) -> None:
+            self.assertEqual(mock_request.call_count, mock_request_call_count)
+            self.assertEqual(RemoteRealmCount.objects.count(), remote_realm_count)
+            self.assertEqual(RemoteInstallationCount.objects.count(), remote_installation_count)
+            self.assertEqual(RemoteRealmAuditLog.objects.count(),
+                             remote_audit_log_count + remote_realm_audit_log)
+
+        # Create some rows we'll send to remote server
         realm_stat = LoggingCountStat('invites_sent::day', RealmCount, CountStat.DAY)
         RealmCount.objects.create(
             realm=user.realm, property=realm_stat.property, end_time=end_time, value=5)
         InstallationCount.objects.create(
-            property=realm_stat.property, end_time=end_time, value=5)
-
+            property=realm_stat.property, end_time=end_time, value=5,
+            # We set a subgroup here to work around:
+            # https://github.com/zulip/zulip/issues/12362
+            subgroup="test_subgroup")
+        # Event type in SYNCED_BILLING_EVENTS -- should be included
+        RealmAuditLog.objects.create(
+            realm=user.realm, modified_user=user, event_type=RealmAuditLog.USER_CREATED,
+            event_time=end_time, extra_data='data')
+        # Event type not in SYNCED_BILLING_EVENTS -- should not be included
+        RealmAuditLog.objects.create(
+            realm=user.realm, modified_user=user, event_type=RealmAuditLog.REALM_LOGO_CHANGED,
+            event_time=end_time, extra_data='data')
         self.assertEqual(RealmCount.objects.count(), 1)
         self.assertEqual(InstallationCount.objects.count(), 1)
+        self.assertEqual(RealmAuditLog.objects.filter(id__gt=audit_log_max_id).count(), 2)
 
-        self.assertEqual(RemoteRealmCount.objects.count(), 0)
-        self.assertEqual(RemoteInstallationCount.objects.count(), 0)
         send_analytics_to_remote_server()
-        self.assertEqual(mock.call_count, 2)
-        self.assertEqual(RemoteRealmCount.objects.count(), 1)
-        self.assertEqual(RemoteInstallationCount.objects.count(), 1)
-        send_analytics_to_remote_server()
-        self.assertEqual(mock.call_count, 3)
-        self.assertEqual(RemoteRealmCount.objects.count(), 1)
-        self.assertEqual(RemoteInstallationCount.objects.count(), 1)
+        check_counts(4, 1, 1, 1)
 
+        # Test having no new rows
+        send_analytics_to_remote_server()
+        check_counts(5, 1, 1, 1)
+
+        # Test only having new RealmCount rows
         RealmCount.objects.create(
             realm=user.realm, property=realm_stat.property, end_time=end_time + datetime.timedelta(days=1), value=6)
         RealmCount.objects.create(
             realm=user.realm, property=realm_stat.property, end_time=end_time + datetime.timedelta(days=2), value=9)
-        self.assertEqual(RemoteRealmCount.objects.count(), 1)
-        self.assertEqual(mock.call_count, 3)
         send_analytics_to_remote_server()
-        self.assertEqual(mock.call_count, 5)
-        self.assertEqual(RemoteRealmCount.objects.count(), 3)
-        self.assertEqual(RemoteInstallationCount.objects.count(), 1)
+        check_counts(7, 3, 1, 1)
 
+        # Test only having new InstallationCount rows
         InstallationCount.objects.create(
             property=realm_stat.property, end_time=end_time + datetime.timedelta(days=1), value=6)
-        InstallationCount.objects.create(
-            property=realm_stat.property, end_time=end_time + datetime.timedelta(days=2), value=9)
         send_analytics_to_remote_server()
-        self.assertEqual(mock.call_count, 7)
-        self.assertEqual(RemoteRealmCount.objects.count(), 3)
-        self.assertEqual(RemoteInstallationCount.objects.count(), 3)
+        check_counts(9, 3, 2, 1)
+
+        # Test only having new RealmAuditLog rows
+        # Non-synced event
+        RealmAuditLog.objects.create(
+            realm=user.realm, modified_user=user, event_type=RealmAuditLog.REALM_LOGO_CHANGED,
+            event_time=end_time, extra_data='data')
+        send_analytics_to_remote_server()
+        check_counts(10, 3, 2, 1)
+        # Synced event
+        RealmAuditLog.objects.create(
+            realm=user.realm, modified_user=user, event_type=RealmAuditLog.USER_REACTIVATED,
+            event_time=end_time, extra_data='data')
+        send_analytics_to_remote_server()
+        check_counts(12, 3, 2, 2)
 
         (realm_count_data,
-         installation_count_data) = build_analytics_data(RealmCount.objects.all(),
-                                                         InstallationCount.objects.all())
+         installation_count_data,
+         realmauditlog_data) = build_analytics_data(RealmCount.objects.all(),
+                                                    InstallationCount.objects.all(),
+                                                    RealmAuditLog.objects.all())
         result = self.api_post(self.server_uuid,
                                '/api/v1/remotes/server/analytics',
                                {'realm_counts': ujson.dumps(realm_count_data),
-                                'installation_counts': ujson.dumps(installation_count_data)},
+                                'installation_counts': ujson.dumps(installation_count_data),
+                                'realmauditlog_rows': ujson.dumps(realmauditlog_data)},
                                subdomain="")
         self.assert_json_error(result, "Data is out of order.")
 
+        with mock.patch("zilencer.views.validate_incoming_table_data"):
+            # We need to wrap a transaction here to avoid the
+            # IntegrityError that will be thrown in here from breaking
+            # the unittest transaction.
+            with transaction.atomic():
+                result = self.api_post(
+                    self.server_uuid,
+                    '/api/v1/remotes/server/analytics',
+                    {'realm_counts': ujson.dumps(realm_count_data),
+                     'installation_counts': ujson.dumps(installation_count_data),
+                     'realmauditlog_rows': ujson.dumps(realmauditlog_data)},
+                    subdomain="")
+            self.assert_json_error(result, "Invalid data.")
+
     @override_settings(PUSH_NOTIFICATION_BOUNCER_URL='https://push.zulip.org.example.com')
     @mock.patch('zerver.lib.push_notifications.requests.request')
-    def test_analytics_api_invalid(self, mock: Any) -> None:
+    def test_analytics_api_invalid(self, mock_request: Any) -> None:
         """This is a variant of the below test_push_api, but using the full
         push notification bouncer flow
         """
-        mock.side_effect = self.bounce_request
+        mock_request.side_effect = self.bounce_request
         user = self.example_user('hamlet')
         end_time = self.TIME_ZERO
 
@@ -385,9 +436,77 @@ class AnalyticsBouncerTest(BouncerTestCase):
         self.assertEqual(RealmCount.objects.count(), 1)
 
         self.assertEqual(RemoteRealmCount.objects.count(), 0)
-        with self.assertRaises(JsonableError):
+        with mock.patch('zerver.lib.remote_server.logging.warning') as log_warning:
             send_analytics_to_remote_server()
+            log_warning.assert_called_once()
         self.assertEqual(RemoteRealmCount.objects.count(), 0)
+
+    # Servers on Zulip 2.0.6 and earlier only send realm_counts and installation_counts data,
+    # and don't send realmauditlog_rows. Make sure that continues to work.
+    @override_settings(PUSH_NOTIFICATION_BOUNCER_URL='https://push.zulip.org.example.com')
+    @mock.patch('zerver.lib.push_notifications.requests.request')
+    def test_old_two_table_format(self, mock_request: Any) -> None:
+        mock_request.side_effect = self.bounce_request
+        # Send fixture generated with Zulip 2.0 code
+        send_to_push_bouncer('POST', 'server/analytics', {
+            'realm_counts': '[{"id":1,"property":"invites_sent::day","subgroup":null,"end_time":574300800.0,"value":5,"realm":2}]',  # lint:ignore
+            'installation_counts': '[]',
+            'version': '"2.0.6+git"'})
+        self.assertEqual(mock_request.call_count, 1)
+        self.assertEqual(RemoteRealmCount.objects.count(), 1)
+        self.assertEqual(RemoteInstallationCount.objects.count(), 0)
+        self.assertEqual(RemoteRealmAuditLog.objects.count(), 0)
+
+    # Make sure we aren't sending data we don't mean to, even if we don't store it.
+    @override_settings(PUSH_NOTIFICATION_BOUNCER_URL='https://push.zulip.org.example.com')
+    @mock.patch('zerver.lib.push_notifications.requests.request')
+    def test_only_sending_intended_realmauditlog_data(self, mock_request: Any) -> None:
+        mock_request.side_effect = self.bounce_request
+        user = self.example_user('hamlet')
+        # Event type in SYNCED_BILLING_EVENTS -- should be included
+        RealmAuditLog.objects.create(
+            realm=user.realm, modified_user=user, event_type=RealmAuditLog.USER_REACTIVATED,
+            event_time=self.TIME_ZERO, extra_data='data')
+        # Event type not in SYNCED_BILLING_EVENTS -- should not be included
+        RealmAuditLog.objects.create(
+            realm=user.realm, modified_user=user, event_type=RealmAuditLog.REALM_LOGO_CHANGED,
+            event_time=self.TIME_ZERO, extra_data='data')
+
+        def check_for_unwanted_data(*args: Any) -> Any:
+            if check_for_unwanted_data.first_call:  # type: ignore
+                check_for_unwanted_data.first_call = False  # type: ignore
+            else:
+                # Test that we're respecting SYNCED_BILLING_EVENTS
+                self.assertIn('"event_type":{}'.format(RealmAuditLog.USER_REACTIVATED), str(args))
+                self.assertNotIn('"event_type":{}'.format(RealmAuditLog.REALM_LOGO_CHANGED), str(args))
+                # Test that we're respecting REALMAUDITLOG_PUSHED_FIELDS
+                self.assertIn('backfilled', str(args))
+                self.assertNotIn('modified_user', str(args))
+            return send_to_push_bouncer(*args)
+
+        # send_analytics_to_remote_server calls send_to_push_bouncer twice.
+        # We need to distinguish the first and second calls.
+        check_for_unwanted_data.first_call = True  # type: ignore
+        with mock.patch('zerver.lib.remote_server.send_to_push_bouncer',
+                        side_effect=check_for_unwanted_data):
+            send_analytics_to_remote_server()
+
+    @override_settings(PUSH_NOTIFICATION_BOUNCER_URL='https://push.zulip.org.example.com')
+    @mock.patch('zerver.lib.push_notifications.requests.request')
+    def test_realmauditlog_data_mapping(self, mock_request: Any) -> None:
+        mock_request.side_effect = self.bounce_request
+        user = self.example_user('hamlet')
+        log_entry = RealmAuditLog.objects.create(
+            realm=user.realm, modified_user=user, backfilled=True,
+            event_type=RealmAuditLog.USER_REACTIVATED, event_time=self.TIME_ZERO, extra_data='data')
+        send_analytics_to_remote_server()
+        remote_log_entry = RemoteRealmAuditLog.objects.order_by('id').last()
+        self.assertEqual(remote_log_entry.server.uuid, self.server_uuid)
+        self.assertEqual(remote_log_entry.remote_id, log_entry.id)
+        self.assertEqual(remote_log_entry.event_time, self.TIME_ZERO)
+        self.assertEqual(remote_log_entry.backfilled, True)
+        self.assertEqual(remote_log_entry.extra_data, 'data')
+        self.assertEqual(remote_log_entry.event_type, RealmAuditLog.USER_REACTIVATED)
 
 class PushNotificationTest(BouncerTestCase):
     def setUp(self) -> None:
@@ -407,7 +526,7 @@ class PushNotificationTest(BouncerTestCase):
             recipient=recipient,
             content='This is test content',
             rendered_content='This is test content',
-            pub_date=now(),
+            date_sent=now(),
             sending_client=self.sending_client,
         )
         message.set_topic_name('Test Topic')
@@ -955,8 +1074,8 @@ class TestGetAPNsPayload(PushNotificationTest):
     def test_get_message_payload_apns_personal_message(self) -> None:
         user_profile = self.example_user("othello")
         message_id = self.send_personal_message(
-            self.example_email('hamlet'),
-            self.example_email('othello'),
+            self.sender.email,
+            user_profile.email,
             'Content of personal message',
         )
         message = Message.objects.get(id=message_id)
@@ -974,11 +1093,12 @@ class TestGetAPNsPayload(PushNotificationTest):
                 'zulip': {
                     'message_ids': [message.id],
                     'recipient_type': 'private',
-                    'sender_email': 'hamlet@zulip.com',
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
+                    "user_id": user_profile.id,
                 }
             }
         }
@@ -1009,11 +1129,12 @@ class TestGetAPNsPayload(PushNotificationTest):
                         str(s.user_profile_id)
                         for s in Subscription.objects.filter(
                             recipient=message.recipient)),
-                    'sender_email': 'hamlet@zulip.com',
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
+                    "user_id": user_profile.id,
                 }
             }
         }
@@ -1040,13 +1161,14 @@ class TestGetAPNsPayload(PushNotificationTest):
                 'zulip': {
                     'message_ids': [message.id],
                     'recipient_type': 'stream',
-                    'sender_email': 'hamlet@zulip.com',
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     "stream": get_display_recipient(message.recipient),
                     "topic": message.topic_name(),
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
+                    "user_id": user_profile.id,
                 }
             }
         }
@@ -1072,13 +1194,47 @@ class TestGetAPNsPayload(PushNotificationTest):
                 'zulip': {
                     'message_ids': [message.id],
                     'recipient_type': 'stream',
-                    'sender_email': 'hamlet@zulip.com',
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     "stream": get_display_recipient(message.recipient),
                     "topic": message.topic_name(),
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
+                    "user_id": user_profile.id,
+                }
+            }
+        }
+        self.assertDictEqual(payload, expected)
+
+    def test_get_message_payload_apns_stream_wildcard_mention(self):
+        # type: () -> None
+        user_profile = self.example_user("othello")
+        stream = Stream.objects.filter(name='Verona').get()
+        message = self.get_message(Recipient.STREAM, stream.id)
+        message.trigger = 'wildcard_mentioned'
+        message.stream_name = 'Verona'
+        payload = get_message_payload_apns(user_profile, message)
+        expected = {
+            'alert': {
+                'title': '#Verona > Test Topic',
+                'subtitle': 'King Hamlet mentioned everyone:',
+                'body': message.content,
+            },
+            'sound': 'default',
+            'badge': 0,
+            'custom': {
+                'zulip': {
+                    'message_ids': [message.id],
+                    'recipient_type': 'stream',
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
+                    "stream": get_display_recipient(message.recipient),
+                    "topic": message.topic_name(),
+                    'server': settings.EXTERNAL_HOST,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
+                    "user_id": user_profile.id,
                 }
             }
         }
@@ -1109,11 +1265,12 @@ class TestGetAPNsPayload(PushNotificationTest):
                         str(s.user_profile_id)
                         for s in Subscription.objects.filter(
                             recipient=message.recipient)),
-                    'sender_email': self.example_email("hamlet"),
-                    'sender_id': 4,
+                    'sender_email': self.sender.email,
+                    'sender_id': self.sender.id,
                     'server': settings.EXTERNAL_HOST,
-                    'realm_id': message.sender.realm.id,
-                    'realm_uri': message.sender.realm.uri,
+                    'realm_id': self.sender.realm.id,
+                    'realm_uri': self.sender.realm.uri,
+                    "user_id": user_profile.id,
                 }
             }
         }
@@ -1131,11 +1288,11 @@ class TestGetGCMPayload(PushNotificationTest):
         user_profile = self.example_user('hamlet')
         payload, gcm_options = get_message_payload_gcm(user_profile, message)
         self.assertDictEqual(payload, {
-            "user": user_profile.email,
+            "user_id": user_profile.id,
             "event": "message",
             "alert": "New mention from King Hamlet",
             "zulip_message_id": message.id,
-            "time": datetime_to_timestamp(message.pub_date),
+            "time": datetime_to_timestamp(message.date_sent),
             "content": 'a' * 200 + '…',
             "content_truncated": True,
             "server": settings.EXTERNAL_HOST,
@@ -1159,11 +1316,11 @@ class TestGetGCMPayload(PushNotificationTest):
         user_profile = self.example_user('hamlet')
         payload, gcm_options = get_message_payload_gcm(user_profile, message)
         self.assertDictEqual(payload, {
-            "user": user_profile.email,
+            "user_id": user_profile.id,
             "event": "message",
             "alert": "New private message from King Hamlet",
             "zulip_message_id": message.id,
-            "time": datetime_to_timestamp(message.pub_date),
+            "time": datetime_to_timestamp(message.date_sent),
             "content": message.content,
             "content_truncated": False,
             "server": settings.EXTERNAL_HOST,
@@ -1186,11 +1343,11 @@ class TestGetGCMPayload(PushNotificationTest):
         user_profile = self.example_user('hamlet')
         payload, gcm_options = get_message_payload_gcm(user_profile, message)
         self.assertDictEqual(payload, {
-            "user": user_profile.email,
+            "user_id": user_profile.id,
             "event": "message",
             "alert": "New stream message from King Hamlet in Denmark",
             "zulip_message_id": message.id,
-            "time": datetime_to_timestamp(message.pub_date),
+            "time": datetime_to_timestamp(message.date_sent),
             "content": message.content,
             "content_truncated": False,
             "server": settings.EXTERNAL_HOST,
@@ -1216,11 +1373,11 @@ class TestGetGCMPayload(PushNotificationTest):
         user_profile = self.example_user('hamlet')
         payload, gcm_options = get_message_payload_gcm(user_profile, message)
         self.assertDictEqual(payload, {
-            "user": user_profile.email,
+            "user_id": user_profile.id,
             "event": "message",
             "alert": "New stream message from King Hamlet in Denmark",
             "zulip_message_id": message.id,
-            "time": datetime_to_timestamp(message.pub_date),
+            "time": datetime_to_timestamp(message.date_sent),
             "content": "***REDACTED***",
             "content_truncated": False,
             "server": settings.EXTERNAL_HOST,
@@ -1538,13 +1695,13 @@ class TestClearOnRead(ZulipTestCase):
         hamlet.save()
         stream = self.subscribe(hamlet, "Denmark")
 
-        msgids = [self.send_stream_message(self.example_email("iago"),
-                                           stream.name,
-                                           "yo {}".format(i))
-                  for i in range(n_msgs)]
+        message_ids = [self.send_stream_message(self.example_email("iago"),
+                                                stream.name,
+                                                "yo {}".format(i))
+                       for i in range(n_msgs)]
         UserMessage.objects.filter(
             user_profile_id=hamlet.id,
-            message_id__in=msgids,
+            message_id__in=message_ids,
         ).update(
             flags=F('flags').bitor(
                 UserMessage.flags.active_mobile_push_notification))
@@ -1555,14 +1712,15 @@ class TestClearOnRead(ZulipTestCase):
             queue_items = [c[0][1] for c in mock_publish.call_args_list]
             groups = [item['message_ids'] for item in queue_items]
 
-        self.assertEqual(len(groups), min(len(msgids), max_unbatched))
+        self.assertEqual(len(groups), min(len(message_ids), max_unbatched))
         for g in groups[:-1]:
             self.assertEqual(len(g), 1)
-        self.assertEqual(sum(len(g) for g in groups), len(msgids))
-        self.assertEqual(set(id for g in groups for id in g), set(msgids))
+        self.assertEqual(sum(len(g) for g in groups), len(message_ids))
+        self.assertEqual(set(id for g in groups for id in g), set(message_ids))
 
 class TestReceivesNotificationsFunctions(ZulipTestCase):
     def setUp(self) -> None:
+        super().setUp()
         self.user = self.example_user('cordelia')
 
     def test_receivers_online_notifications_when_user_is_a_bot(self) -> None:
@@ -1653,24 +1811,32 @@ class TestPushNotificationsContent(ZulipTestCase):
         tests = fixtures["regular_tests"]
         for test in tests:
             if "text_content" in test:
-                output = get_mobile_push_content(test["expected_output"])
-                self.assertEqual(output, test["text_content"])
+                with self.subTest(markdown_test_case=test["name"]):
+                    output = get_mobile_push_content(test["expected_output"])
+                    self.assertEqual(output, test["text_content"])
 
     def test_backend_only_fixtures(self) -> None:
+        realm = get_realm("zulip")
+        cordelia = self.example_user("cordelia")
+        stream = get_stream("Verona", realm)
+
         fixtures = [
             {
                 'name': 'realm_emoji',
-                'rendered_content': '<p>Testing <img alt=":green_tick:" class="emoji" src="/user_avatars/1/emoji/green_tick.png" title="green tick"> realm emoji.</p>',
+                'rendered_content': '<p>Testing <img alt=":green_tick:" class="emoji" src="/user_avatars/%s/emoji/green_tick.png" title="green tick"> realm emoji.</p>' % (
+                    realm.id,),
                 'expected_output': 'Testing :green_tick: realm emoji.',
             },
             {
                 'name': 'mentions',
-                'rendered_content': '<p>Mentioning <span class="user-mention" data-user-id="3">@Cordelia Lear</span>.</p>',
+                'rendered_content': '<p>Mentioning <span class="user-mention" data-user-id="%s">@Cordelia Lear</span>.</p>' % (
+                    cordelia.id,),
                 'expected_output': 'Mentioning @Cordelia Lear.',
             },
             {
                 'name': 'stream_names',
-                'rendered_content': '<p>Testing stream names <a class="stream" data-stream-id="5" href="/#narrow/stream/Verona">#Verona</a>.</p>',
+                'rendered_content': '<p>Testing stream names <a class="stream" data-stream-id="%s" href="/#narrow/stream/Verona">#Verona</a>.</p>' % (
+                    stream.id,),
                 'expected_output': 'Testing stream names #Verona.',
             },
         ]

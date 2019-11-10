@@ -1,6 +1,4 @@
-var feedback_widget = (function () {
-
-var exports = {};
+const render_feedback_container = require('../templates/feedback_container.hbs');
 
 /*
 
@@ -21,14 +19,14 @@ Codewise it's a singleton widget that controls the DOM inside
 */
 
 
-var meta = {
+const meta = {
     hide_me_time: null,
     alert_hover_state: false,
     $container: null,
     opened: false,
 };
 
-var animate = {
+const animate = {
     maybe_close: function () {
         if (!meta.opened) {
             return;
@@ -121,7 +119,7 @@ exports.show = function (opts) {
 
     meta.$container = $('#feedback_container');
 
-    var html = templates.render('feedback_container');
+    const html = render_feedback_container();
     meta.$container.html(html);
 
     set_up_handlers();
@@ -138,10 +136,4 @@ exports.show = function (opts) {
     animate.fadeIn();
 };
 
-return exports;
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = feedback_widget;
-}
-window.feedback_widget = feedback_widget;
+window.feedback_widget = exports;

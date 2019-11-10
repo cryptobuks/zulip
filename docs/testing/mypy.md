@@ -3,13 +3,9 @@
 [mypy](http://mypy-lang.org/) is a compile-time static type checker
 for Python, allowing optional, gradual typing of Python code.  Zulip
 was fully annotated with mypy's Python 2 syntax in 2016, before our
-migration to Python 3 in late 2017.
-
-As a result, Zulip is in the process of migrating from using mypy's
-Python 2 compatible syntax for type annotations (in which type
-annotations are written inside comments that start with `# type: `) to
-the Python 3 syntax.  Here's a brief example of the mypy syntax we're
-using in Zulip:
+migration to Python 3 in late 2017.  In 2018, we migrated essentially
+the entire codebase to the nice PEP-484 (Python 3 only) syntax for
+static types:
 
 ```
 user_dict = {} # type: Dict[str, UserProfile]
@@ -23,7 +19,10 @@ You can learn more about it at:
 * The
   [mypy cheat sheet for Python 3](http://mypy.readthedocs.io/en/latest/cheat_sheet_py3.html)
   is the best resource for quickly understanding how to write the PEP
-  484 type annotations used by mypy correctly.
+  484 type annotations used by mypy correctly.  The
+  [Python 2 cheat sheet](http://mypy.readthedocs.io/en/latest/cheat_sheet.html)
+  is useful for understanding the type comment syntax needed for our
+  few modules that need to support both Python 2 and 3.
 
 * The
   [Python type annotation spec in PEP 484](https://www.python.org/dev/peps/pep-0484/)
@@ -48,14 +47,6 @@ requirements/mypy.txt`.
 To run mypy on Zulip's python code, you can run the command:
 
     tools/run-mypy
-
-This will take a while to start running, since it runs mypy as a
-long-running daemon (server) process and send type-checking requests
-to the server; this makes checking mypy about 100x faster.  But if
-you're debugging or for whatever reason don't want the daemon, you can
-use:
-
-    tools/run-mypy --no-daemon
 
 Mypy outputs errors in the same style as a compiler would.  For
 example, if your code has a type error like this:
@@ -96,36 +87,6 @@ an `Any` or `# type: ignore` so you're not blocked waiting for help,
 add a `# TODO: ` comment so it doesn't get forgotten in code review,
 and ask for help in chat.zulip.org.
 
-## mypy in production scripts
-
-While in most of the Zulip codebase, we can consistently use the
-`typing` module (Part of the standard library in Python 3.5, but
-present as an installable module with older Python), in our installer
-and other production scripts that might run outside a Zulip
-virtualenv, we cannot rely on the `typing` module being present on the
-system.
-
-To solve this problem, we use the following (semi-standard in the mypy
-community) hack in those scripts:
-
-```
-if False:
-    # See https://zulip.readthedocs.io/en/latest/testing/mypy.html#mypy-in-production-scripts
-    from typing import List
-```
-
-and then use the Python 2 style type comment syntax for annotating
-those files.  This way, the Python interpreters for Python 2.7 and 3.4
-will ignore this line, and thus not crash.  But we can still get all
-the benefits of type annotations in that codebase, since the `mypy`
-type checker ignores the `if False` and thus still is able to
-type-check the file using those imports.
-
-The exception to this rule is that any scripts which use
-`setup_path_on_import` before they import from the `typing` module are
-safe.  These, we generally declare in the relevant exclude line in
-`tools/linter_lib/custom_check.py`
-
 ## mypy stubs for third-party modules.
 
 For the Python standard library and some popular third-party modules,
@@ -148,10 +109,6 @@ For any third-party modules that don't have stubs, `mypy` treats
 everything in the third-party module as an `Any`, which is the right
 model (one certainly wouldn't want to need stubs for everything just
 to use `mypy`!), but means the code can't be fully type-checked.
-
-**Note**: When editing stubs, we recommend using
-`tools/run-mypy --no-daemon`, because the mypy daemon's caching
-system has some bugs around editing stubs that can be confusing.
 
 ## `type_debug.py`
 

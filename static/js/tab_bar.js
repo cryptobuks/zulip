@@ -1,6 +1,4 @@
-var tab_bar = (function () {
-
-var exports = {};
+var render_tab_bar = require('../templates/tab_bar.hbs');
 
 function make_tab(title, hash, data, extra_class, home) {
     return {active: "inactive",
@@ -25,7 +23,7 @@ function make_tab_data() {
             return true;
         }
 
-        return !stream_data.in_home_view(stream_id);
+        return stream_data.is_muted(stream_id);
     }
 
     function in_all() {
@@ -81,6 +79,8 @@ function make_tab_data() {
 
         } else if (filter.has_operand("is", "starred")) {
             tabs.push(make_tab("Starred", hashed));
+        } else if (filter.has_operand("streams", "public")) {
+            tabs.push(make_tab("Public Streams", hashed));
         } else if (filter.has_operator("near")) {
             tabs.push(make_tab("Near " + filter.operands("near")[0], hashed));
         } else if (filter.has_operator("id")) {
@@ -158,7 +158,7 @@ function build_tab_bar() {
     tab_bar.empty();
 
     tabs[tabs.length - 1].active = "active";
-    var rendered =  templates.render('tab_bar', {tabs: tabs});
+    var rendered =  render_tab_bar({tabs: tabs});
 
     tab_bar.append(rendered);
     exports.colorize_tab_bar();
@@ -169,11 +169,4 @@ exports.initialize = function () {
     build_tab_bar();
 };
 
-return exports;
-
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = tab_bar;
-}
-window.tab_bar = tab_bar;
+window.tab_bar = exports;

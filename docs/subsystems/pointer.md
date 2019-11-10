@@ -80,7 +80,7 @@ browser), Zulip will preserve the state -- what (if any) narrow the
 user was in, the selected message, and even exact scroll position!
 
 For more on the user experience philosophy guiding these decisions,
-see [the architectural overview](../overview/architecture-overview.html).
+see [the architectural overview](../overview/architecture-overview.md).
 
 ## Unread count logic
 
@@ -98,6 +98,10 @@ use the product.  The algorithm is as follows:
 These two simple rules, combined with the pointer logic above, end up
 matching user expectations well for whether the product should treat
 them as having read a set of messages (or not).
+
+One key detail to highlight is that we only mark messages as read
+through these processes in views that contain all messages in a
+thread; search views will never mark messages as read.
 
 ## Testing and development
 

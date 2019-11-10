@@ -6,6 +6,7 @@ import shutil
 
 from boto.s3.connection import S3Connection
 from boto.s3.key import Key
+from bs4 import BeautifulSoup
 from django.conf import settings
 from django.db import connection
 from django.db.models import Max
@@ -237,11 +238,47 @@ def fix_message_rendered_content(realm: Realm,
             # For Zulip->Zulip imports, we use the original rendered
             # markdown; this avoids issues where e.g. a mention can no
             # longer render properly because a user has changed their
-            # name.  However, some syntax ends up being broken, e.g.:
-            # data-user-id for mentions.
+            # name.
             #
-            # TODO: Add logic to parse the markdown and edit those
-            # data-user-id values.
+            # However, we still need to update the data-user-id and
+            # similar values stored on mentions, stream mentions, and
+            # similar syntax in the rendered HTML.
+            soup = BeautifulSoup(message["rendered_content"], "html.parser")
+
+            user_mentions = soup.findAll("span", {"class": "user-mention"})
+            if len(user_mentions) != 0:
+                user_id_map = ID_MAP["user_profile"]
+                for mention in user_mentions:
+                    if not mention.has_attr("data-user-id"):
+                        # Legacy mentions don't have a data-user-id
+                        # field; we should just import them
+                        # unmodified.
+                        continue
+                    if mention['data-user-id'] == "*":
+                        # No rewriting is required for wildcard mentions
+                        continue
+                    old_user_id = int(mention["data-user-id"])
+                    if old_user_id in user_id_map:
+                        mention["data-user-id"] = str(user_id_map[old_user_id])
+                message['rendered_content'] = str(soup)
+
+            stream_mentions = soup.findAll("a", {"class": "stream"})
+            if len(stream_mentions) != 0:
+                stream_id_map = ID_MAP["stream"]
+                for mention in stream_mentions:
+                    old_stream_id = int(mention["data-stream-id"])
+                    if old_stream_id in stream_id_map:
+                        mention["data-stream-id"] = str(stream_id_map[old_stream_id])
+                message['rendered_content'] = str(soup)
+
+            user_group_mentions = soup.findAll("span", {"class": "user-group-mention"})
+            if len(user_group_mentions) != 0:
+                user_group_id_map = ID_MAP["usergroup"]
+                for mention in user_group_mentions:
+                    old_user_group_id = int(mention["data-user-group-id"])
+                    if old_user_group_id in user_group_id_map:
+                        mention["data-user-group-id"] = str(user_group_id_map[old_user_group_id])
+                message['rendered_content'] = str(soup)
             continue
 
         message_object = FakeMessage()
@@ -279,7 +316,7 @@ def fix_message_rendered_content(realm: Realm,
             # * rendering markdown failing with the exception being
             #   caught in bugdown (which then returns None, causing the the
             #   rendered_content assert above to fire).
-            logging.warning("Error in markdown rendering for message ID %s; continuing" % (message['id']))
+            logging.warning("Error in markdown rendering for message ID %s; continuing" % (message['id'],))
 
 def current_table_ids(data: TableData, table: TableName) -> List[int]:
     """
@@ -579,7 +616,12 @@ def import_uploads(import_dir: Path, processes: int, processing_avatars: bool=Fa
             if record['s3_path'].endswith('.original'):
                 relative_path += '.original'
             else:
-                relative_path += '.png'
+                # TODO: This really should be unconditional.  However,
+                # until we fix the S3 upload backend to use the .png
+                # path suffix for its normal avatar URLs, we need to
+                # only do this for the LOCAL_UPLOADS_DIR backend.
+                if not s3_uploads:
+                    relative_path += '.png'
         elif processing_emojis:
             # For emojis we follow the function 'upload_emoji_image'
             relative_path = RealmEmoji.PATH_ID_TEMPLATE.format(
@@ -662,7 +704,7 @@ def import_uploads(import_dir: Path, processes: int, processing_avatars: bool=Fa
                         upload_backend.ensure_basic_avatar_image(user_profile=user_profile)
                 except BadImageError:
                     logging.warning("Could not thumbnail avatar image for user %s; ignoring" % (
-                        user_profile.id))
+                        user_profile.id,))
                     # Delete the record of the avatar to avoid 404s.
                     do_change_avatar_fields(user_profile, UserProfile.AVATAR_FROM_GRAVATAR)
             return 0
@@ -972,9 +1014,8 @@ def do_import_realm(import_dir: Path, subdomain: str, processes: int=1) -> Realm
 
     # Similarly, we need to recalculate the first_message_id for stream objects.
     for stream in Stream.objects.filter(realm=realm):
-        first_message = Message.objects.filter(
-            recipient__type_id=stream.id,
-            recipient__type=2).first()
+        recipient = Recipient.objects.get(type=Recipient.STREAM, type_id=stream.id)
+        first_message = Message.objects.filter(recipient=recipient).first()
         if first_message is None:
             stream.first_message_id = None
         else:
@@ -1050,7 +1091,7 @@ def get_incoming_message_ids(import_dir: Path,
     ids, which can be millions of integers for some installations.
     And then we sort the list.  This is necessary to ensure
     that the sort order of incoming ids matches the sort order
-    of pub_date, which isn't always guaranteed by our
+    of date_sent, which isn't always guaranteed by our
     utilities that convert third party chat data.  We also
     need to move our ids to a new range if we're dealing
     with a server that has data for other realms.
@@ -1074,7 +1115,7 @@ def get_incoming_message_ids(import_dir: Path,
         del data['zerver_usermessage']
 
         for row in data['zerver_message']:
-            # We truncate pub_date to int to theoretically
+            # We truncate date_sent to int to theoretically
             # save memory and speed up the sort.  For
             # Zulip-to-Zulip imports, the
             # message_id will generally be a good tiebreaker.
@@ -1087,8 +1128,8 @@ def get_incoming_message_ids(import_dir: Path,
             message_id = row['id']
 
             if sort_by_date:
-                pub_date = int(row['pub_date'])
-                tup = (pub_date, message_id)
+                date_sent = int(row['date_sent'])
+                tup = (date_sent, message_id)
                 tups.append(tup)
             else:
                 message_ids.append(message_id)

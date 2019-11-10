@@ -1,12 +1,13 @@
 import os
 import ujson
-from typing import Union, Dict
+from typing import Union, Dict, Optional
 
 from django.conf import settings
 from django.core.management.base import CommandParser
 from django.test import Client
 
-from zerver.lib.management import ZulipBaseCommand
+from zerver.lib.management import ZulipBaseCommand, CommandError
+from zerver.lib.webhooks.common import standardize_headers
 from zerver.models import get_realm
 
 class Command(ZulipBaseCommand):
@@ -50,31 +51,24 @@ approach shown above.
         self.add_realm_args(parser, help="Specify which realm/subdomain to connect to; default is zulip")
 
     def parse_headers(self, custom_headers: Union[None, str]) -> Union[None, Dict[str, str]]:
-        headers = {}
         if not custom_headers:
-            return None
+            return {}
         try:
             custom_headers_dict = ujson.loads(custom_headers)
-            for header in custom_headers_dict:
-                if len(header.split(" ")) > 1:
-                    raise ValueError("custom header '%s' contains a space." % (header))
-                headers["HTTP_" + header.upper().replace("-", "_")] = str(custom_headers_dict[header])
-            return headers
         except ValueError as ve:
-            print('Encountered an error while attempting to parse custom headers: %s' % (ve))
-            print('Note: all strings must be enclosed within "" instead of \'\'')
-            exit(1)
+            raise CommandError('Encountered an error while attempting to parse custom headers: {}\n'
+                               'Note: all strings must be enclosed within "" instead of \'\''.format(ve))
+        return standardize_headers(custom_headers_dict)
 
-    def handle(self, **options: str) -> None:
+    def handle(self, **options: Optional[str]) -> None:
         if options['fixture'] is None or options['url'] is None:
             self.print_help('./manage.py', 'send_webhook_fixture_message')
-            exit(1)
+            raise CommandError
 
         full_fixture_path = os.path.join(settings.DEPLOY_ROOT, options['fixture'])
 
         if not self._does_fixture_path_exist(full_fixture_path):
-            print('Fixture {} does not exist'.format(options['fixture']))
-            exit(1)
+            raise CommandError('Fixture {} does not exist'.format(options['fixture']))
 
         headers = self.parse_headers(options['custom-headers'])
         json = self._get_fixture_as_json(full_fixture_path)
@@ -90,8 +84,7 @@ approach shown above.
             result = client.post(options['url'], json, content_type="application/json",
                                  HTTP_HOST=realm.host)
         if result.status_code != 200:
-            print('Error status %s: %s' % (result.status_code, result.content))
-            exit(1)
+            raise CommandError('Error status %s: %s' % (result.status_code, result.content))
 
     def _does_fixture_path_exist(self, fixture_path: str) -> bool:
         return os.path.exists(fixture_path)

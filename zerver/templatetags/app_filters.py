@@ -1,4 +1,3 @@
-from html import unescape
 from typing import Any, Dict, List, Optional
 
 import markdown
@@ -19,7 +18,7 @@ import zerver.lib.bugdown.help_settings_links
 import zerver.lib.bugdown.help_relative_links
 import zerver.lib.bugdown.help_emoticon_translations_table
 import zerver.lib.bugdown.include
-from zerver.lib.cache import ignore_unhashable_lru_cache
+from zerver.lib.cache import ignore_unhashable_lru_cache, dict_to_items_tuple, items_tuple_to_dict
 
 register = Library()
 
@@ -67,10 +66,12 @@ docs_without_macros = [
     "incoming-webhooks-walkthrough.md",
 ]
 
-# Much of the time, render_markdown_path is called with hashable
-# arguments, so this decorator is effective even though it only caches
-# the results when called if none of the arguments are unhashable.
+# render_markdown_path is passed a context dictionary (unhashable), which
+# results in the calls not being cached. To work around this, we convert the
+# dict to a tuple of dict items to cache the results.
+@dict_to_items_tuple
 @ignore_unhashable_lru_cache(512)
+@items_tuple_to_dict
 @register.filter(name='render_markdown_path', is_safe=True)
 def render_markdown_path(markdown_file_path: str,
                          context: Optional[Dict[Any, Any]]=None,
@@ -101,10 +102,11 @@ def render_markdown_path(markdown_file_path: str,
                 linenums=False,
                 guess_lang=False
             ),
-            zerver.lib.bugdown.fenced_code.makeExtension(),
+            zerver.lib.bugdown.fenced_code.makeExtension(
+                run_content_validators=context.get('run_content_validators', False)
+            ),
             zerver.lib.bugdown.api_arguments_table_generator.makeExtension(
                 base_path='templates/zerver/api/'),
-            zerver.lib.bugdown.api_code_examples.makeExtension(),
             zerver.lib.bugdown.nested_code_blocks.makeExtension(),
             zerver.lib.bugdown.tabbed_sections.makeExtension(),
             zerver.lib.bugdown.help_settings_links.makeExtension(),
@@ -114,11 +116,20 @@ def render_markdown_path(markdown_file_path: str,
     if md_macro_extension is None:
         md_macro_extension = zerver.lib.bugdown.include.makeExtension(
             base_path='templates/zerver/help/include/')
+    extensions = md_extensions
+    if 'api_url' in context:
+        # We need to generate the API code examples extension each
+        # time so the `api_url` config parameter can be set dynamically.
+        #
+        # TODO: Convert this to something more efficient involving
+        # passing the API URL as a direct parameter.
+        extensions = extensions + [zerver.lib.bugdown.api_code_examples.makeExtension(
+            api_url=context["api_url"],
+        )]
+    if not any(doc in markdown_file_path for doc in docs_without_macros):
+        extensions = extensions + [md_macro_extension]
 
-    if any(doc in markdown_file_path for doc in docs_without_macros):
-        md_engine = markdown.Markdown(extensions=md_extensions)
-    else:
-        md_engine = markdown.Markdown(extensions=md_extensions + [md_macro_extension])
+    md_engine = markdown.Markdown(extensions=extensions)
     md_engine.reset()
 
     jinja = engines['Jinja2']
@@ -143,14 +154,5 @@ def render_markdown_path(markdown_file_path: str,
 
     html = md_engine.convert(markdown_string)
     rendered_html = jinja.from_string(html).render(context)
-
-    if context.get('unescape_rendered_html', False):
-        # In some exceptional cases (such as our Freshdesk webhook docs),
-        # code blocks in some of our Markdown templates have characters such
-        # as '{' encoded as '&#123;' to prevent clashes with Jinja2 syntax,
-        # but the encoded form never gets decoded because the text ends up
-        # inside a <pre> tag. So here, we explicitly "unescape" such characters
-        # if 'unescape_rendered_html' is True.
-        rendered_html = unescape(rendered_html)
 
     return mark_safe(rendered_html)

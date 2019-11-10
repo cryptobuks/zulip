@@ -1,11 +1,8 @@
-var namespace = (function () {
+const _ = require('underscore/underscore.js');
 
-var _ = require('node_modules/underscore/underscore.js');
-var exports = {};
-
-var dependencies = [];
-var requires = [];
-var old_builtins = {};
+let dependencies = [];
+const requires = [];
+let old_builtins = {};
 
 exports.set_global = function (name, val) {
     global[name] = val;
@@ -21,10 +18,13 @@ exports.patch_builtin = function (name, val) {
 
 exports.zrequire = function (name, fn) {
     if (fn === undefined) {
-        fn = 'js/' + name;
+        fn = '../../static/js/' + name;
+    } else if (/^generated\/|^js\/|^shared\/|^third\//.test(fn)) {
+        // FIXME: Stealing part of the NPM namespace is confusing.
+        fn = '../../static/' + fn;
     }
     delete require.cache[require.resolve(fn)];
-    var obj = require(fn);
+    const obj = require(fn);
     requires.push(fn);
     set_global(name, obj);
     return obj;
@@ -38,6 +38,7 @@ exports.restore = function () {
         delete require.cache[require.resolve(fn)];
     });
     dependencies = [];
+    delete global.window.electron_bridge;
     _.extend(global, old_builtins);
     old_builtins = {};
 };
@@ -59,12 +60,12 @@ exports.with_overrides = function (test_function) {
     // This function calls test_function() and passes in
     // a way to override the namespace temporarily.
 
-    var clobber_callbacks = [];
+    const clobber_callbacks = [];
 
-    var override = function (name, f) {
-        var parts = name.split('.');
-        var module = parts[0];
-        var func_name = parts[1];
+    const override = function (name, f) {
+        const parts = name.split('.');
+        const module = parts[0];
+        const func_name = parts[1];
 
         if (!_.has(global, module)) {
             set_global(module, {});
@@ -87,9 +88,3 @@ exports.with_overrides = function (test_function) {
         f();
     });
 };
-
-
-
-return exports;
-}());
-module.exports = namespace;

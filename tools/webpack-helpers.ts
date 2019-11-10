@@ -1,26 +1,13 @@
-import { basename } from 'path';
+import { RuleSetRule, RuleSetUseItem } from 'webpack';
+import { basename, resolve } from 'path';
 
-/* Return imports-loader format to the config
-    For example:
-    [
-        // Adds 'imports-loader?this=>widndow'
-        {path: './foler/my_module.js', args: '?this=>window'},
-    ]
-*/
-interface importLoaderOptions {
-   path: string;
-   args: string;
-}
-function getImportLoaders( optionsArr:Array<importLoaderOptions> ) {
-    let importsLoaders = [];
-    for(var loaderEntry of optionsArr) {
-        importsLoaders.push({
-            test: require.resolve(loaderEntry.path),
-            use: "imports-loader?" + loaderEntry.args
-        });
-    }
-    return importsLoaders;
-}
+export const cacheLoader: RuleSetUseItem = {
+    loader: 'cache-loader',
+    options: {
+        cacheDirectory: resolve(__dirname, '../var/webpack-cache'),
+    },
+};
+
 /* Return expose-loader format to the config
     For example
     [
@@ -34,25 +21,25 @@ function getImportLoaders( optionsArr:Array<importLoaderOptions> ) {
         {path: './folder/my_module.js', name: ['name1', 'name2']}
     ]
 */
-interface exportLoaderOptions {
-   path: string;
-   name?: string | Array<string>;
+interface ExportLoaderOptions {
+    path: string;
+    name?: string | string[];
 }
-function getExposeLoaders( optionsArr:Array<exportLoaderOptions> ) {
-    let exposeLoaders = [];
-    for(var loaderEntry of optionsArr) {
-        let path = loaderEntry.path;
+function getExposeLoaders(optionsArr: ExportLoaderOptions[]): RuleSetRule[] {
+    const exposeLoaders = [];
+    for (var loaderEntry of optionsArr) {
+        const path = loaderEntry.path;
         let name = "";
-        let useArr = [];
+        const useArr = [cacheLoader];
         // If no name is provided, infer it
-        if(!loaderEntry.name) {
+        if (!loaderEntry.name) {
             name = basename(path, '.js');
             useArr.push({loader: 'expose-loader', options: name});
         } else {
             // If name is an array
-            if(Array.isArray(loaderEntry.name)) {
-                for(var exposeName of loaderEntry.name) {
-                    useArr.push({loader: 'expose-loader', options: exposeName})
+            if (Array.isArray(loaderEntry.name)) {
+                for (var exposeName of loaderEntry.name) {
+                    useArr.push({loader: 'expose-loader', options: exposeName});
                 }
             // If name is a string
             } else {
@@ -61,12 +48,11 @@ function getExposeLoaders( optionsArr:Array<exportLoaderOptions> ) {
         }
         exposeLoaders.push({
             test: require.resolve(path),
-            use: useArr
+            use: useArr,
         });
     }
     return exposeLoaders;
 }
 export {
     getExposeLoaders,
-    getImportLoaders
-}
+};

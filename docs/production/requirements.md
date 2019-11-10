@@ -5,8 +5,8 @@ To run a Zulip server, you will need:
 * A supported OS:
   * Ubuntu 18.04 Bionic
   * Ubuntu 16.04 Xenial
-  * Ubuntu 14.04 Trusty (deprecated due to [approaching end-of-life][trusty-eol])
   * Debian 9 Stretch
+  * Debian 10 Buster
 * At least 2GB RAM, and 10GB disk space
   * If you expect 100+ users: 4GB RAM, and 2 CPUs
 * A hostname in DNS
@@ -25,17 +25,16 @@ strongly recommend using either a fresh machine instance in a cloud
 provider, a fresh VM, or a dedicated machine.  If you decide to
 disregard our advice and use a server that hosts other services, we
 can't support you, but
-[we do have some notes on issues you'll encounter](install-existing-server.html).
+[we do have some notes on issues you'll encounter](install-existing-server.md).
 
 #### Operating System
 
-Ubuntu 18.04 Bionic, Ubuntu 16.04 Xenial, Ubuntu 14.04 Trusty and
-Debian Stretch are supported for running Zulip in production.  64-bit
-is recommended.  We also recommend installing on the newest option
-you're comfortable with, to save your organization the work of
-upgrading (Ubuntu Trusty will
-[reach end of life in April 2019][trusty-eol]; Zulip 2.0 will be the
-last major release to support it).
+Ubuntu 18.04 Bionic, Ubuntu 16.04 Xenial, Debian Buster and Debian
+Stretch are supported for running Zulip in production.  64-bit is
+recommended.  We also recommend installing on the newest option you're
+comfortable with, to save your organization the work of upgrading
+(Ubuntu Trusty [reached end of life in April 2019][trusty-eol]; Zulip
+2.0 was the last major release to support it).
 
 If you're using Ubuntu, the
 [Ubuntu universe repository][ubuntu-repositories] must be
@@ -72,14 +71,15 @@ https://help.ubuntu.com/community/Repositories/Ubuntu
   messages sent.  We recommend using an SSD and avoiding cloud storage
   backends that limit the IOPS per second, since the disk is primarily
   used for the database (assuming you're using the
-  [S3 file uploads backend](../production/upload-backends.html)).
+  [S3 file uploads backend](../production/upload-backends.md)).
 
 #### Network and Security Specifications
 
 * Incoming HTTPS access (usually port 443, though this is
-  configurable) from the networks where your users are (usually, the
-  public Internet).  If you also open port 80, Zulip will redirect
-  users to HTTPS rather than not working when users type
+  [configurable](../production/deployment.html#using-an-alternate-port))
+  from the networks where your users are (usually, the public
+  Internet).  If you also open port 80, Zulip will redirect users to
+  HTTPS rather than not working when users type
   e.g. `http://zulip.example.com` in their browser.  If you are using
   Zulip's [incoming email integration][email-mirror-code] you may also
   need incoming port 25 open.
@@ -114,7 +114,7 @@ available: [the `--self-signed-cert` option][doc-self-signed] in the
 installer.
 
 If you'd rather acquire an SSL certificate another way, see our [SSL
-certificate documentation](ssl-certificates.html).
+certificate documentation](ssl-certificates.md).
 
 [doc-certbot]: ssl-certificates.html#certbot-recommended
 [doc-self-signed]: ssl-certificates.html#self-signed-certificate
@@ -129,6 +129,6 @@ certificate documentation](ssl-certificates.html).
   [free outgoing SMTP options and options for prototyping](email.html#free-outgoing-email-services).
 
 Once you have met these requirements, see [full instructions for installing
-Zulip in production](../production/install.html).
+Zulip in production](../production/install.md).
 
 [trusty-eol]: https://wiki.ubuntu.com/Releases

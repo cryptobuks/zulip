@@ -13,7 +13,7 @@ from django.conf import settings
 
 from zerver.forms import OurAuthenticationForm
 from zerver.lib.actions import do_deactivate_realm, do_deactivate_user, \
-    do_reactivate_user, do_reactivate_realm
+    do_reactivate_user, do_reactivate_realm, do_set_realm_property
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.initial_password import initial_password
 from zerver.lib.test_helpers import (
@@ -28,9 +28,9 @@ from zerver.lib.user_agent import parse_user_agent
 from zerver.lib.request import \
     REQ, has_request_variables, RequestVariableMissingError, \
     RequestVariableConversionError, RequestConfusingParmsError
+from zerver.lib.webhooks.common import UnexpectedWebhookEventType
 from zerver.decorator import (
     api_key_only_webhook_view,
-    authenticated_api_view,
     authenticated_json_view,
     authenticated_rest_api_view,
     authenticated_uploads_api_view,
@@ -40,11 +40,12 @@ from zerver.decorator import (
     return_success_on_head_request, to_not_negative_int_or_none,
     zulip_login_required
 )
-from zerver.lib.cache import ignore_unhashable_lru_cache
+from zerver.lib.cache import ignore_unhashable_lru_cache, dict_to_items_tuple, items_tuple_to_dict
 from zerver.lib.validator import (
     check_string, check_dict, check_dict_only, check_bool, check_float, check_int, check_list, Validator,
     check_variable_type, equals, check_none_or, check_url, check_short_string,
     check_string_fixed_length, check_capped_string, check_color, to_non_negative_int,
+    check_string_or_int_list, check_string_or_int
 )
 from zerver.models import \
     get_realm, get_user, UserProfile, Realm
@@ -277,6 +278,11 @@ class DecoratorTestCase(TestCase):
         def my_webhook_raises_exception(request: HttpRequest, user_profile: UserProfile) -> None:
             raise Exception("raised by webhook function")
 
+        @api_key_only_webhook_view('ClientName')
+        def my_webhook_raises_exception_unexpected_event(
+                request: HttpRequest, user_profile: UserProfile) -> None:
+            raise UnexpectedWebhookEventType("helloworld", "test_event")
+
         webhook_bot_email = 'webhook-bot@zulip.com'
         webhook_bot_realm = get_realm('zulip')
         webhook_bot = get_user(webhook_bot_email, webhook_bot_realm)
@@ -338,6 +344,37 @@ class DecoratorTestCase(TestCase):
                 request.content_type = 'application/json'
                 request.META['HTTP_X_CUSTOM_HEADER'] = 'custom_value'
                 my_webhook_raises_exception(request)  # type: ignore # mypy doesn't seem to apply the decorator
+
+            message = """
+user: {email} ({realm})
+client: {client_name}
+URL: {path_info}
+content_type: {content_type}
+custom_http_headers:
+{custom_headers}
+body:
+
+{body}
+                """
+            message = message.strip(' ')
+            mock_exception.assert_called_with(message.format(
+                email=webhook_bot_email,
+                realm=webhook_bot_realm.string_id,
+                client_name=webhook_client_name,
+                path_info=request.META.get('PATH_INFO'),
+                content_type=request.content_type,
+                custom_headers="HTTP_X_CUSTOM_HEADER: custom_value\n",
+                body=request.body,
+            ))
+
+        # Test when an unexpected webhook event occurs
+        with mock.patch('zerver.decorator.webhook_unexpected_events_logger.exception') as mock_exception:
+            exception_msg = "The 'test_event' event isn't currently supported by the helloworld webhook"
+            with self.assertRaisesRegex(UnexpectedWebhookEventType, exception_msg):
+                request.body = "invalidjson"
+                request.content_type = 'application/json'
+                request.META['HTTP_X_CUSTOM_HEADER'] = 'custom_value'
+                my_webhook_raises_exception_unexpected_event(request)  # type: ignore # mypy doesn't seem to apply the decorator
 
             message = """
 user: {email} ({realm})
@@ -460,51 +497,6 @@ class SkipRateLimitingTest(ZulipTestCase):
             self.assertTrue(rate_limit_mock.called)
 
 class DecoratorLoggingTestCase(ZulipTestCase):
-    def test_authenticated_api_view_logging(self) -> None:
-        @authenticated_api_view(is_webhook=True)
-        def my_webhook_raises_exception(request: HttpRequest, user_profile: UserProfile) -> None:
-            raise Exception("raised by webhook function")
-
-        webhook_bot_email = 'webhook-bot@zulip.com'
-        webhook_bot_realm = get_realm('zulip')
-        webhook_bot = get_user(webhook_bot_email, webhook_bot_realm)
-        webhook_bot_api_key = get_api_key(webhook_bot)
-
-        request = HostRequestMock()
-        request.method = 'POST'
-        request.POST['api_key'] = webhook_bot_api_key
-        request.POST['email'] = webhook_bot_email
-        request.host = "zulip.testserver"
-
-        with mock.patch('zerver.decorator.webhook_logger.exception') as mock_exception:
-            with self.assertRaisesRegex(Exception, "raised by webhook function"):
-                request.body = '{}'
-                request.POST['payload'] = '{}'
-                request.content_type = 'text/plain'
-                my_webhook_raises_exception(request)  # type: ignore # mypy doesn't seem to apply the decorator
-
-            message = """
-user: {email} ({realm})
-client: {client_name}
-URL: {path_info}
-content_type: {content_type}
-custom_http_headers:
-{custom_headers}
-body:
-
-{body}
-                """
-            message = message.strip(' ')
-            mock_exception.assert_called_with(message.format(
-                email=webhook_bot_email,
-                realm=webhook_bot_realm.string_id,
-                client_name='Unspecified',
-                path_info=request.META.get('PATH_INFO'),
-                content_type=request.content_type,
-                custom_headers=None,
-                body=request.body,
-            ))
-
     def test_authenticated_rest_api_view_logging(self) -> None:
         @authenticated_rest_api_view(webhook_client_name="ClientName")
         def my_webhook_raises_exception(request: HttpRequest, user_profile: UserProfile) -> None:
@@ -524,6 +516,50 @@ body:
 
         with mock.patch('zerver.decorator.webhook_logger.exception') as mock_exception:
             with self.assertRaisesRegex(Exception, "raised by webhook function"):
+                my_webhook_raises_exception(request)  # type: ignore # mypy doesn't seem to apply the decorator
+
+            message = """
+user: {email} ({realm})
+client: {client_name}
+URL: {path_info}
+content_type: {content_type}
+custom_http_headers:
+{custom_headers}
+body:
+
+{body}
+                """
+            message = message.strip(' ')
+            mock_exception.assert_called_with(message.format(
+                email=webhook_bot_email,
+                realm=webhook_bot_realm.string_id,
+                client_name='ZulipClientNameWebhook',
+                path_info=request.META.get('PATH_INFO'),
+                content_type=request.content_type,
+                custom_headers=None,
+                body=request.body,
+            ))
+
+    def test_authenticated_rest_api_view_logging_unexpected_event(self) -> None:
+        @authenticated_rest_api_view(webhook_client_name="ClientName")
+        def my_webhook_raises_exception(request: HttpRequest, user_profile: UserProfile) -> None:
+            raise UnexpectedWebhookEventType("helloworld", "test_event")
+
+        webhook_bot_email = 'webhook-bot@zulip.com'
+        webhook_bot_realm = get_realm('zulip')
+
+        request = HostRequestMock()
+        request.META['HTTP_AUTHORIZATION'] = self.encode_credentials(webhook_bot_email)
+        request.method = 'POST'
+        request.host = "zulip.testserver"
+
+        request.body = '{}'
+        request.POST['payload'] = '{}'
+        request.content_type = 'text/plain'
+
+        with mock.patch('zerver.decorator.webhook_unexpected_events_logger.exception') as mock_exception:
+            exception_msg = "The 'test_event' event isn't currently supported by the helloworld webhook"
+            with self.assertRaisesRegex(UnexpectedWebhookEventType, exception_msg):
                 my_webhook_raises_exception(request)  # type: ignore # mypy doesn't seem to apply the decorator
 
             message = """
@@ -951,6 +987,30 @@ class ValidatorTestCase(TestCase):
         url = 99.3
         self.assertEqual(check_url('url', url), 'url is not a string')
 
+    def test_check_string_or_int_list(self) -> None:
+        x = "string"  # type: Any
+        self.assertEqual(check_string_or_int_list('x', x), None)
+
+        x = [1, 2, 4]
+        self.assertEqual(check_string_or_int_list('x', x), None)
+
+        x = None
+        self.assertEqual(check_string_or_int_list('x', x), 'x is not a string or an integer list')
+
+        x = [1, 2, '3']
+        self.assertEqual(check_string_or_int_list('x', x), 'x[2] is not an integer')
+
+    def test_check_string_or_int(self) -> None:
+        x = "string"  # type: Any
+        self.assertEqual(check_string_or_int('x', x), None)
+
+        x = 1
+        self.assertEqual(check_string_or_int('x', x), None)
+
+        x = None
+        self.assertEqual(check_string_or_int('x', x), 'x is not a string or integer')
+
+
 class DeactivatedRealmTest(ZulipTestCase):
     def test_send_deactivated_realm(self) -> None:
         """
@@ -1058,6 +1118,17 @@ class FetchAPIKeyTest(ZulipTestCase):
 
         self.login(email)
         result = self.client_post("/json/fetch_api_key", {"password": initial_password(email)})
+        self.assert_json_success(result)
+
+    def test_fetch_api_key_email_address_visibility(self) -> None:
+        user_profile = self.example_user("cordelia")
+        email = user_profile.email
+        do_set_realm_property(user_profile.realm, "email_address_visibility",
+                              Realm.EMAIL_ADDRESS_VISIBILITY_ADMINS)
+
+        self.login(email)
+        result = self.client_post("/json/fetch_api_key",
+                                  {"password": initial_password(email)})
         self.assert_json_success(result)
 
     def test_fetch_api_key_wrong_password(self) -> None:
@@ -1193,6 +1264,7 @@ class InactiveUserTest(ZulipTestCase):
 
 class TestIncomingWebhookBot(ZulipTestCase):
     def setUp(self) -> None:
+        super().setUp()
         zulip_realm = get_realm('zulip')
         self.webhook_bot = get_user('webhook-bot@zulip.com', zulip_realm)
 
@@ -1210,6 +1282,7 @@ class TestIncomingWebhookBot(ZulipTestCase):
 
 class TestValidateApiKey(ZulipTestCase):
     def setUp(self) -> None:
+        super().setUp()
         zulip_realm = get_realm('zulip')
         self.webhook_bot = get_user('webhook-bot@zulip.com', zulip_realm)
         self.default_bot = get_user('default-bot@zulip.com', zulip_realm)
@@ -1589,7 +1662,7 @@ class TestRequireDecorators(ZulipTestCase):
         result = self.common_subscribe_to_streams(guest_user.email, ["Denmark"])
         self.assert_json_error(result, "Not allowed for guest users")
 
-    def test_require_non_guest_human_user_decorator(self) -> None:
+    def test_require_member_or_admin_decorator(self) -> None:
         result = self.api_get("outgoing-webhook@zulip.com", '/api/v1/bots')
         self.assert_json_error(result, "This endpoint does not accept bot requests.")
 
@@ -1638,7 +1711,7 @@ class RestAPITest(ZulipTestCase):
         self.login(self.example_email("hamlet"))
         result = self.client_options('/json/users')
         self.assertEqual(result.status_code, 204)
-        self.assertEqual(str(result['Allow']), 'GET, POST')
+        self.assertEqual(str(result['Allow']), 'GET, HEAD, POST')
 
         result = self.client_options('/json/streams/15')
         self.assertEqual(result.status_code, 204)
@@ -1759,13 +1832,74 @@ class TestIgnoreUnhashableLRUCache(ZulipTestCase):
         self.assertEqual(result, 1)
 
         # Check unhashable argument.
-        result = f([1])
+        result = f({1: 2})
         hits, misses, currsize = get_cache_info()
         # Cache should not be used.
         self.assertEqual(hits, 1)
         self.assertEqual(misses, 1)
         self.assertEqual(currsize, 1)
-        self.assertEqual(result, [1])
+        self.assertEqual(result, {1: 2})
+
+        # Clear cache.
+        clear_cache()
+        hits, misses, currsize = get_cache_info()
+        self.assertEqual(hits, 0)
+        self.assertEqual(misses, 0)
+        self.assertEqual(currsize, 0)
+
+    def test_cache_hit_dict_args(self) -> None:
+        @ignore_unhashable_lru_cache()
+        @items_tuple_to_dict
+        def g(arg: Any) -> Any:
+            return arg
+
+        def get_cache_info() -> Tuple[int, int, int]:
+            info = getattr(g, 'cache_info')()
+            hits = getattr(info, 'hits')
+            misses = getattr(info, 'misses')
+            currsize = getattr(info, 'currsize')
+            return hits, misses, currsize
+
+        def clear_cache() -> None:
+            getattr(g, 'cache_clear')()
+
+        # Not used as a decorator on the definition to allow defining
+        # get_cache_info and clear_cache
+        f = dict_to_items_tuple(g)
+
+        # Check hashable argument.
+        result = f(1)
+        hits, misses, currsize = get_cache_info()
+        # First one should be a miss.
+        self.assertEqual(hits, 0)
+        self.assertEqual(misses, 1)
+        self.assertEqual(currsize, 1)
+        self.assertEqual(result, 1)
+
+        result = f(1)
+        hits, misses, currsize = get_cache_info()
+        # Second one should be a hit.
+        self.assertEqual(hits, 1)
+        self.assertEqual(misses, 1)
+        self.assertEqual(currsize, 1)
+        self.assertEqual(result, 1)
+
+        # Check dict argument.
+        result = f({1: 2})
+        hits, misses, currsize = get_cache_info()
+        # First one is a miss
+        self.assertEqual(hits, 1)
+        self.assertEqual(misses, 2)
+        self.assertEqual(currsize, 2)
+        self.assertEqual(result, {1: 2})
+
+        result = f({1: 2})
+        hits, misses, currsize = get_cache_info()
+        # Second one should be a hit.
+        self.assertEqual(hits, 2)
+        self.assertEqual(misses, 2)
+        self.assertEqual(currsize, 2)
+        self.assertEqual(result, {1: 2})
 
         # Clear cache.
         clear_cache()

@@ -1,4 +1,3 @@
-
 """
 Forward messages sent to the configured email gateway to Zulip.
 
@@ -29,7 +28,7 @@ from imaplib import IMAP4_SSL
 from typing import Any, Generator
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from zerver.lib.email_mirror import logger, process_message
 
@@ -51,13 +50,13 @@ def get_imap_messages() -> Generator[Message, None, None]:
     try:
         mbox.select(settings.EMAIL_GATEWAY_IMAP_FOLDER)
         try:
-            status, num_ids_data = mbox.search(None, 'ALL')  # type: ignore # https://github.com/python/typeshed/pull/1762
-            for msgid in num_ids_data[0].split():
-                status, msg_data = mbox.fetch(msgid, '(RFC822)')
+            status, num_ids_data = mbox.search(None, 'ALL')
+            for message_id in num_ids_data[0].split():
+                status, msg_data = mbox.fetch(message_id, '(RFC822)')
                 msg_as_bytes = msg_data[0][1]
                 message = email.message_from_bytes(msg_as_bytes)
                 yield message
-                mbox.store(msgid, '+FLAGS', '\\Deleted')
+                mbox.store(message_id, '+FLAGS', '\\Deleted')
             mbox.expunge()
         finally:
             mbox.close()
@@ -73,8 +72,7 @@ class Command(BaseCommand):
         if (not settings.EMAIL_GATEWAY_BOT or not settings.EMAIL_GATEWAY_LOGIN or
             not settings.EMAIL_GATEWAY_PASSWORD or not settings.EMAIL_GATEWAY_IMAP_SERVER or
                 not settings.EMAIL_GATEWAY_IMAP_PORT or not settings.EMAIL_GATEWAY_IMAP_FOLDER):
-            print("Please configure the Email Mirror Gateway in /etc/zulip/, "
-                  "or specify $ORIGINAL_RECIPIENT if piping a single mail.")
-            exit(1)
+            raise CommandError("Please configure the Email Mirror Gateway in /etc/zulip/, "
+                               "or specify $ORIGINAL_RECIPIENT if piping a single mail.")
         for message in get_imap_messages():
             process_message(message)

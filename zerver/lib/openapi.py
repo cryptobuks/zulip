@@ -1,7 +1,7 @@
 # Set of helper functions to manipulate the OpenAPI files that define our REST
 # API's specification.
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 OPENAPI_SPEC_PATH = os.path.abspath(os.path.join(
     os.path.dirname(__file__),
@@ -22,7 +22,7 @@ class OpenAPISpec():
     def __init__(self, path: str) -> None:
         self.path = path
         self.last_update = None  # type: Optional[float]
-        self.data = None
+        self.data = None  # type: Optional[Dict[str, Any]]
 
     def reload(self) -> None:
         # Because importing yamole (and in turn, yaml) takes
@@ -67,9 +67,21 @@ def get_openapi_fixture(endpoint: str, method: str,
             [response]['content']['application/json']['schema']
             ['example'])
 
-def get_openapi_parameters(endpoint: str,
-                           method: str) -> List[Dict[str, Any]]:
-    return (openapi_spec.spec()['paths'][endpoint][method.lower()]['parameters'])
+def get_openapi_paths() -> Set[str]:
+    return set(openapi_spec.spec()['paths'].keys())
+
+def get_openapi_parameters(endpoint: str, method: str,
+                           include_url_parameters: bool=True) -> List[Dict[str, Any]]:
+    openapi_endpoint = openapi_spec.spec()['paths'][endpoint][method.lower()]
+    # We do a `.get()` for this last bit to distinguish documented
+    # endpoints with no parameters (empty list) from undocumented
+    # endpoints (KeyError exception).
+    parameters = openapi_endpoint.get('parameters', [])
+    # Also, we skip parameters defined in the URL.
+    if not include_url_parameters:
+        parameters = [parameter for parameter in parameters if
+                      parameter['in'] != 'path']
+    return parameters
 
 def validate_against_openapi_schema(content: Dict[str, Any], endpoint: str,
                                     method: str, response: str) -> None:

@@ -1,8 +1,5 @@
 {% extends "zerver/base.html" %}
-
-{% block porticocustomhead %}
-{{ render_bundle('portico') }}
-{% endblock %}
+{% set entrypoint = "digest" %}
 
 {% block content %}
 <body>
@@ -18,6 +15,7 @@
                 {% include 'zerver/emails/compiled/digest.html' %}
                 <img id="digest-footer" src="/static/images/emails/footer.png"/>
             </div>
+            <pre>{% include 'zerver/emails/digest.txt' %}</pre>
             <div class="digest-address-link"> {{physical_address}}</div>
         </div>
         {% include 'zerver/footer.html' %}

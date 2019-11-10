@@ -1,11 +1,10 @@
-
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+from zerver.lib.types import DisplayRecipientT
 
 from confirmation.models import one_click_unsubscribe_link
 from django.conf import settings
 from django.utils.timezone import now as timezone_now
 from django.contrib.auth import get_backends
-from django_auth_ldap.backend import LDAPBackend
 
 from zerver.decorator import statsd_increment
 from zerver.lib.message import bulk_access_messages
@@ -27,12 +26,13 @@ from zerver.models import (
 
 from datetime import timedelta
 from email.utils import formataddr
+import html2text
 from lxml.cssselect import CSSSelector
 import lxml.html
 import re
-import subprocess
 from collections import defaultdict
 import pytz
+from bs4 import BeautifulSoup
 
 def relative_to_full_url(base_url: str, content: str) -> str:
     # Convert relative URLs to absolute URLs.
@@ -138,7 +138,18 @@ def build_message_list(user_profile: UserProfile, messages: List[Message]) -> Li
         # with a simple hyperlink.
         return re.sub(r"\[(\S*)\]\((\S*)\)", r"\2", content)
 
-    def build_message_payload(message: Message) -> Dict[str, str]:
+    def append_sender_to_message(message_plain: str, message_html: str, sender: str) -> Tuple[str, str]:
+        message_plain = "{}: {}".format(sender, message_plain)
+        message_soup = BeautifulSoup(message_html, "html.parser")
+        sender_name_soup = BeautifulSoup("<b>{}</b>: ".format(sender), "html.parser")
+        first_tag = message_soup.find()
+        if first_tag.name == "p":
+            first_tag.insert(0, sender_name_soup)
+        else:
+            message_soup.insert(0, sender_name_soup)
+        return message_plain, str(message_soup)
+
+    def build_message_payload(message: Message, sender: Optional[str]=None) -> Dict[str, str]:
         plain = message.content
         plain = fix_plaintext_image_urls(plain)
         # There's a small chance of colliding with non-Zulip URLs containing
@@ -154,43 +165,36 @@ def build_message_list(user_profile: UserProfile, messages: List[Message]) -> Li
         html = message.rendered_content
         html = relative_to_full_url(user_profile.realm.uri, html)
         html = fix_emojis(html, user_profile.realm.uri, user_profile.emojiset)
-
+        if sender:
+            plain, html = append_sender_to_message(plain, html, sender)
         return {'plain': plain, 'html': html}
 
     def build_sender_payload(message: Message) -> Dict[str, Any]:
         sender = sender_string(message)
         return {'sender': sender,
-                'content': [build_message_payload(message)]}
+                'content': [build_message_payload(message, sender)]}
 
     def message_header(user_profile: UserProfile, message: Message) -> Dict[str, Any]:
         if message.recipient.type == Recipient.PERSONAL:
+            narrow_link = get_narrow_url(user_profile, message)
             header = "You and %s" % (message.sender.full_name,)
-            html_link = personal_narrow_url(
-                realm=user_profile.realm,
-                sender=message.sender,
-            )
-            header_html = "<a style='color: #ffffff;' href='%s'>%s</a>" % (html_link, header)
+            header_html = "<a style='color: #ffffff;' href='%s'>%s</a>" % (narrow_link, header)
         elif message.recipient.type == Recipient.HUDDLE:
-            disp_recipient = get_display_recipient(message.recipient)
-            assert not isinstance(disp_recipient, str)
-            other_recipients = [r['full_name'] for r in disp_recipient
+            display_recipient = get_display_recipient(message.recipient)
+            assert not isinstance(display_recipient, str)
+            narrow_link = get_narrow_url(user_profile, message,
+                                         display_recipient=display_recipient)
+            other_recipients = [r['full_name'] for r in display_recipient
                                 if r['id'] != user_profile.id]
             header = "You and %s" % (", ".join(other_recipients),)
-            other_user_ids = [r['id'] for r in disp_recipient
-                              if r['id'] != user_profile.id]
-            html_link = huddle_narrow_url(
-                realm=user_profile.realm,
-                other_user_ids=other_user_ids,
-            )
-
-            header_html = "<a style='color: #ffffff;' href='%s'>%s</a>" % (html_link, header)
+            header_html = "<a style='color: #ffffff;' href='%s'>%s</a>" % (narrow_link, header)
         else:
             stream = Stream.objects.only('id', 'name').get(id=message.recipient.type_id)
+            narrow_link = get_narrow_url(user_profile, message, stream=stream)
             header = "%s > %s" % (stream.name, message.topic_name())
             stream_link = stream_narrow_url(user_profile.realm, stream)
-            topic_link = topic_narrow_url(user_profile.realm, stream, message.topic_name())
             header_html = "<a href='%s'>%s</a> > <a href='%s'>%s</a>" % (
-                stream_link, stream.name, topic_link, message.topic_name())
+                stream_link, stream.name, narrow_link, message.topic_name())
         return {"plain": header,
                 "html": header_html,
                 "stream_message": message.recipient.type_name() == "stream"}
@@ -220,7 +224,7 @@ def build_message_list(user_profile: UserProfile, messages: List[Message]) -> Li
     #    },
     # ]
 
-    messages.sort(key=lambda message: message.pub_date)
+    messages.sort(key=lambda message: message.date_sent)
 
     for message in messages:
         header = message_header(user_profile, message)
@@ -244,6 +248,39 @@ def build_message_list(user_profile: UserProfile, messages: List[Message]) -> Li
             messages_to_render.append(recipient_block)
 
     return messages_to_render
+
+def get_narrow_url(user_profile: UserProfile, message: Message,
+                   display_recipient: Optional[DisplayRecipientT]=None,
+                   stream: Optional[Stream]=None) -> str:
+    """The display_recipient and stream arguments are optional.  If not
+    provided, we'll compute them from the message; they exist as a
+    performance optimization for cases where the caller needs those
+    data too.
+    """
+    if message.recipient.type == Recipient.PERSONAL:
+        assert stream is None
+        assert display_recipient is None
+        return personal_narrow_url(
+            realm=user_profile.realm,
+            sender=message.sender,
+        )
+    elif message.recipient.type == Recipient.HUDDLE:
+        assert stream is None
+        if display_recipient is None:
+            display_recipient = get_display_recipient(message.recipient)
+        assert display_recipient is not None
+        assert not isinstance(display_recipient, str)
+        other_user_ids = [r['id'] for r in display_recipient
+                          if r['id'] != user_profile.id]
+        return huddle_narrow_url(
+            realm=user_profile.realm,
+            other_user_ids=other_user_ids,
+        )
+    else:
+        assert display_recipient is None
+        if stream is None:
+            stream = Stream.objects.only('id', 'name').get(id=message.recipient.type_id)
+        return topic_narrow_url(user_profile.realm, stream, message.topic_name())
 
 def message_content_allowed_in_missedmessage_emails(user_profile: UserProfile) -> bool:
     return user_profile.realm.message_content_allowed_in_email_notifications and \
@@ -274,9 +311,11 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
     if len(recipients) != 1:
         raise ValueError(
             'All missed_messages must have the same recipient and topic %r' %
-            recipients
+            (recipients,)
         )
 
+    # This link is no longer a part of the email, but keeping the code in case
+    # we find a clean way to add it back in the future
     unsubscribe_link = one_click_unsubscribe_link(user_profile, "missed_messages")
     context = common_context(user_profile)
     context.update({
@@ -290,8 +329,9 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
     triggers = list(message['trigger'] for message in missed_messages)
     unique_triggers = set(triggers)
     context.update({
-        'mention': 'mentioned' in unique_triggers,
-        'mention_count': triggers.count('mentioned'),
+        'mention': 'mentioned' in unique_triggers or 'wildcard_mentioned' in unique_triggers,
+        'stream_email_notify': 'stream_email_notify' in unique_triggers,
+        'mention_count': triggers.count('mentioned') + triggers.count("wildcard_mentioned"),
     })
 
     # If this setting (email mirroring integration) is enabled, only then
@@ -299,12 +339,10 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
     # ensure to display warning in the template.
     if settings.EMAIL_GATEWAY_PATTERN:
         context.update({
-            'reply_warning': False,
             'reply_to_zulip': True,
         })
     else:
         context.update({
-            'reply_warning': True,
             'reply_to_zulip': False,
         })
 
@@ -315,6 +353,11 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
     else:
         reply_to_name = "Zulip"
 
+    narrow_url = get_narrow_url(user_profile, missed_messages[0]['message'])
+    context.update({
+        'narrow_url': narrow_url,
+    })
+
     senders = list(set(m['message'].sender for m in missed_messages))
     if (missed_messages[0]['message'].recipient.type == Recipient.HUDDLE):
         display_recipient = get_display_recipient(missed_messages[0]['message'].recipient)
@@ -324,7 +367,7 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
                             if r['id'] != user_profile.id]
         context.update({'group_pm': True})
         if len(other_recipients) == 2:
-            huddle_display_name = "%s" % (" and ".join(other_recipients))
+            huddle_display_name = " and ".join(other_recipients)
             context.update({'huddle_display_name': huddle_display_name})
         elif len(other_recipients) == 3:
             huddle_display_name = "%s, %s, and %s" % (
@@ -336,14 +379,18 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
             context.update({'huddle_display_name': huddle_display_name})
     elif (missed_messages[0]['message'].recipient.type == Recipient.PERSONAL):
         context.update({'private_message': True})
-    elif context['mention']:
+    elif (context['mention'] or context['stream_email_notify']):
         # Keep only the senders who actually mentioned the user
-        senders = list(set(m['message'].sender for m in missed_messages
-                           if m['trigger'] == 'mentioned'))
-        # TODO: When we add wildcard mentions that send emails, we
-        # should make sure the right logic applies here.
-    elif ('stream_email_notify' in unique_triggers):
-        context.update({'stream_email_notify': True})
+        if context['mention']:
+            senders = list(set(m['message'].sender for m in missed_messages
+                               if m['trigger'] == 'mentioned' or
+                               m['trigger'] == 'wildcard_mentioned'))
+        message = missed_messages[0]['message']
+        stream = Stream.objects.only('id', 'name').get(id=message.recipient.type_id)
+        stream_header = "%s > %s" % (stream.name, message.topic_name())
+        context.update({
+            'stream_header': stream_header,
+        })
     else:
         raise AssertionError("Invalid messages!")
 
@@ -374,7 +421,6 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile: UserProfile,
         sender = senders[0]
         from_name, from_address = (sender.full_name, sender.email)
         context.update({
-            'reply_warning': False,
             'reply_to_zulip': False,
         })
 
@@ -428,7 +474,7 @@ def handle_missedmessage_emails(user_profile_id: int,
     }
 
     for msg_list in messages_by_bucket.values():
-        msg = min(msg_list, key=lambda msg: msg.pub_date)
+        msg = min(msg_list, key=lambda msg: msg.date_sent)
         if msg.is_stream_message():
             context_messages = get_context_for_message(msg)
             filtered_context_messages = bulk_access_messages(user_profile, context_messages)
@@ -502,7 +548,7 @@ def enqueue_welcome_emails(user: UserProfile, realm_creation: bool=False) -> Non
         'realm_name': user.realm.name,
         'realm_creation': realm_creation,
         'email': user.email,
-        'is_realm_admin': user.is_realm_admin,
+        'is_realm_admin': user.role == UserProfile.ROLE_REALM_ADMINISTRATOR,
     })
     if user.is_realm_admin:
         context['getting_started_link'] = (user.realm.uri +
@@ -510,16 +556,18 @@ def enqueue_welcome_emails(user: UserProfile, realm_creation: bool=False) -> Non
     else:
         context['getting_started_link'] = "https://zulipchat.com"
 
-    from zproject.backends import email_belongs_to_ldap
+    # Imported here to avoid import cycles.
+    from zproject.backends import email_belongs_to_ldap, ZulipLDAPAuthBackend
 
     if email_belongs_to_ldap(user.realm, user.email):
         context["ldap"] = True
-        if settings.LDAP_APPEND_DOMAIN:
-            for backend in get_backends():
-                if isinstance(backend, LDAPBackend):
-                    context["ldap_username"] = backend.django_to_ldap_username(user.email)
-        elif not settings.LDAP_EMAIL_ATTR:
-            context["ldap_username"] = user.email
+        for backend in get_backends():
+            # If the user is doing authentication via LDAP, Note that
+            # we exclude ZulipLDAPUserPopulator here, since that
+            # isn't used for authentication.
+            if isinstance(backend, ZulipLDAPAuthBackend):
+                context["ldap_username"] = backend.django_to_ldap_username(user.email)
+                break
 
     send_future_email(
         "zerver/emails/followup_day1", user.realm, to_user_ids=[user.id], from_name=from_name,
@@ -531,22 +579,9 @@ def enqueue_welcome_emails(user: UserProfile, realm_creation: bool=False) -> Non
             from_address=from_address, context=context, delay=followup_day2_email_delay(user))
 
 def convert_html_to_markdown(html: str) -> str:
-    # On Linux, the tool installs as html2markdown, and there's a command called
-    # html2text that does something totally different. On OSX, the tool installs
-    # as html2text.
-    commands = ["html2markdown", "html2text"]
+    parser = html2text.HTML2Text()
+    markdown = parser.handle(html).strip()
 
-    for command in commands:
-        try:
-            # A body width of 0 means do not try to wrap the text for us.
-            p = subprocess.Popen(
-                [command, "--body-width=0"], stdout=subprocess.PIPE,
-                stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
-            break
-        except OSError:
-            continue
-
-    markdown = p.communicate(input=html.encode('utf-8'))[0].decode('utf-8').strip()
     # We want images to get linked and inline previewed, but html2text will turn
     # them into links of the form `![](http://foo.com/image.png)`, which is
     # ugly. Run a regex over the resulting description, turning links of the

@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from typing import (
     Any, Callable, Dict, Generator, Iterable, Iterator, List, Mapping,
-    Optional, Tuple, Union, IO, TypeVar
+    Optional, Tuple, Union, IO, TypeVar, TYPE_CHECKING
 )
 
 from django.core import signing
@@ -38,7 +38,7 @@ from zerver.models import (
     UserProfile,
 )
 
-if False:
+if TYPE_CHECKING:
     # Avoid an import cycle; we only need these for type annotations.
     from zerver.lib.test_classes import ZulipTestCase, MigrationsTestCase
 
@@ -162,7 +162,7 @@ def queries_captured(include_savepoints: Optional[bool]=False) -> Generator[
             if include_savepoints or ('SAVEPOINT' not in sql):
                 queries.append({
                     'sql': self.mogrify(sql, params).decode('utf-8'),
-                    'time': "%.3f" % duration,
+                    'time': "%.3f" % (duration,),
                 })
 
     old_execute = TimeTrackingCursor.execute
@@ -283,13 +283,20 @@ class HostRequestMock:
         return self.host
 
 class MockPythonResponse:
-    def __init__(self, text: str, status_code: int) -> None:
+    def __init__(self, text: str, status_code: int, headers: Optional[Dict[str, str]]=None) -> None:
         self.text = text
         self.status_code = status_code
+        if headers is None:
+            headers = {'content-type': 'text/html'}
+        self.headers = headers
 
     @property
     def ok(self) -> bool:
         return self.status_code == 200
+
+    def iter_content(self, n: int) -> Generator[str, Any, None]:
+        yield self.text[:n]
+
 
 INSTRUMENTING = os.environ.get('TEST_INSTRUMENT_URL_COVERAGE', '') == 'TRUE'
 INSTRUMENTED_CALLS = []  # type: List[Dict[str, Any]]
@@ -396,6 +403,7 @@ def write_instrumentation_reports(full_suite: bool, include_webhooks: bool) -> N
             'node-coverage/(?P<path>.*)',
             'docs/(?P<path>.*)',
             'casper/(?P<path>.*)',
+            'static/(?P<path>.*)',
         ] + [webhook.url for webhook in WEBHOOK_INTEGRATIONS if not include_webhooks])
 
         untested_patterns -= exempt_patterns
@@ -480,7 +488,7 @@ def create_s3_buckets(*bucket_names: Tuple[str]) -> List[Bucket]:
     buckets = [conn.create_bucket(name) for name in bucket_names]
     return buckets
 
-def use_db_models(method: Callable[..., None]) -> Callable[..., None]:
+def use_db_models(method: Callable[..., None]) -> Callable[..., None]:  # nocoverage
     def method_patched_with_mock(self: 'MigrationsTestCase', apps: StateApps) -> None:
         ArchivedAttachment = apps.get_model('zerver', 'ArchivedAttachment')
         ArchivedMessage = apps.get_model('zerver', 'ArchivedMessage')
@@ -587,3 +595,9 @@ def use_db_models(method: Callable[..., None]) -> Callable[..., None]:
                 zerver_test_classes_patch:
             method(self, apps)
     return method_patched_with_mock
+
+def create_dummy_file(filename: str) -> str:
+    filepath = os.path.join(settings.TEST_WORKER_DIR, filename)
+    with open(filepath, 'w') as f:
+        f.write('zulip!')
+    return filepath

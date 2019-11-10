@@ -3,7 +3,7 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.utils.translation import ugettext as _
 from django.core.exceptions import ValidationError
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_safe
 
 from zerver.decorator import require_realm_admin, to_non_negative_int, to_not_negative_int_or_none
 from zerver.lib.actions import (
@@ -39,9 +39,9 @@ def update_realm(
         invite_by_admins_only: Optional[bool]=REQ(validator=check_bool, default=None),
         name_changes_disabled: Optional[bool]=REQ(validator=check_bool, default=None),
         email_changes_disabled: Optional[bool]=REQ(validator=check_bool, default=None),
+        avatar_changes_disabled: Optional[bool]=REQ(validator=check_bool, default=None),
         inline_image_preview: Optional[bool]=REQ(validator=check_bool, default=None),
         inline_url_embed_preview: Optional[bool]=REQ(validator=check_bool, default=None),
-        create_stream_by_admins_only: Optional[bool]=REQ(validator=check_bool, default=None),
         add_emoji_by_admins_only: Optional[bool]=REQ(validator=check_bool, default=None),
         allow_message_deleting: Optional[bool]=REQ(validator=check_bool, default=None),
         message_content_delete_limit_seconds: Optional[int]=REQ(converter=to_non_negative_int, default=None),
@@ -57,35 +57,43 @@ def update_realm(
         signup_notifications_stream_id: Optional[int]=REQ(validator=check_int, default=None),
         message_retention_days: Optional[int]=REQ(converter=to_not_negative_int_or_none, default=None),
         send_welcome_emails: Optional[bool]=REQ(validator=check_bool, default=None),
+        digest_emails_enabled: Optional[bool]=REQ(validator=check_bool, default=None),
         message_content_allowed_in_email_notifications:
         Optional[bool]=REQ(validator=check_bool, default=None),
         bot_creation_policy: Optional[int]=REQ(converter=to_not_negative_int_or_none, default=None),
+        create_stream_policy: Optional[int]=REQ(validator=check_int, default=None),
+        invite_to_stream_policy: Optional[int]=REQ(validator=check_int, default=None),
+        user_group_edit_policy: Optional[int]=REQ(validator=check_int, default=None),
         email_address_visibility: Optional[int]=REQ(converter=to_not_negative_int_or_none, default=None),
         default_twenty_four_hour_time: Optional[bool]=REQ(validator=check_bool, default=None),
-        video_chat_provider: Optional[str]=REQ(validator=check_string, default=None),
+        video_chat_provider: Optional[int]=REQ(validator=check_int, default=None),
         google_hangouts_domain: Optional[str]=REQ(validator=check_string, default=None),
         zoom_user_id: Optional[str]=REQ(validator=check_string, default=None),
         zoom_api_key: Optional[str]=REQ(validator=check_string, default=None),
         zoom_api_secret: Optional[str]=REQ(validator=check_string, default=None),
+        digest_weekday: Optional[int]=REQ(validator=check_int, default=None),
 ) -> HttpResponse:
     realm = user_profile.realm
 
     # Additional validation/error checking beyond types go here, so
     # the entire request can succeed or fail atomically.
     if default_language is not None and default_language not in get_available_language_codes():
-        raise JsonableError(_("Invalid language '%s'" % (default_language,)))
+        raise JsonableError(_("Invalid language '%s'") % (default_language,))
     if description is not None and len(description) > 1000:
         return json_error(_("Organization description is too long."))
     if name is not None and len(name) > Realm.MAX_REALM_NAME_LENGTH:
         return json_error(_("Organization name is too long."))
     if authentication_methods is not None and True not in list(authentication_methods.values()):
         return json_error(_("At least one authentication method must be enabled."))
-    if video_chat_provider == "Google Hangouts":
+    if (video_chat_provider is not None and
+            video_chat_provider not in set(p['id'] for p in Realm.VIDEO_CHAT_PROVIDERS.values())):
+        return json_error(_("Invalid video chat provider {}").format(video_chat_provider))
+    if video_chat_provider == Realm.VIDEO_CHAT_PROVIDERS['google_hangouts']['id']:
         try:
             validate_domain(google_hangouts_domain)
         except ValidationError as e:
             return json_error(_('Invalid domain: {}').format(e.messages[0]))
-    if video_chat_provider == "Zoom":
+    if video_chat_provider == Realm.VIDEO_CHAT_PROVIDERS['zoom']['id']:
         if not zoom_api_secret:
             # Use the saved Zoom API secret if a new value isn't being sent
             zoom_api_secret = user_profile.realm.zoom_api_secret
@@ -110,11 +118,21 @@ def update_realm(
                 third_party_service="Zoom"))
 
     # Additional validation of enum-style values
+    # TODO: Ideally, these checks would be automated rather than being manually maintained.
     if bot_creation_policy is not None and bot_creation_policy not in Realm.BOT_CREATION_POLICY_TYPES:
-        return json_error(_("Invalid bot creation policy"))
+        return json_error(_("Invalid %(field_name)s") % dict(field_name="bot_creation_policy"))
     if email_address_visibility is not None and \
             email_address_visibility not in Realm.EMAIL_ADDRESS_VISIBILITY_TYPES:
-        return json_error(_("Invalid email address visibility policy"))
+        return json_error(_("Invalid %(field_name)s") % dict(field_name="email_address_visibility"))
+    if create_stream_policy is not None and \
+            create_stream_policy not in Realm.CREATE_STREAM_POLICY_TYPES:
+        return json_error(_("Invalid %(field_name)s") % dict(field_name="create_stream_policy"))
+    if invite_to_stream_policy is not None and \
+            invite_to_stream_policy not in Realm.INVITE_TO_STREAM_POLICY_TYPES:
+        return json_error(_("Invalid %(field_name)s") % dict(field_name="invite_to_stream_policy"))
+    if user_group_edit_policy is not None and \
+            user_group_edit_policy not in Realm.USER_GROUP_EDIT_POLICY_TYPES:
+        return json_error(_("Invalid %(field_name)s") % dict(field_name="user_group_edit_policy"))
 
     # The user of `locals()` here is a bit of a code smell, but it's
     # restricted to the elements present in realm.property_types.
@@ -192,12 +210,12 @@ def update_realm(
 
 @require_realm_admin
 @has_request_variables
-def deactivate_realm(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:
-    realm = user_profile.realm
-    do_deactivate_realm(realm)
+def deactivate_realm(request: HttpRequest, user: UserProfile) -> HttpResponse:
+    realm = user.realm
+    do_deactivate_realm(realm, user)
     return json_success()
 
-@require_GET
+@require_safe
 def check_subdomain_available(request: HttpRequest, subdomain: str) -> HttpResponse:
     try:
         check_subdomain(subdomain)

@@ -21,7 +21,7 @@ follows:
 1. Uncomment the `PUSH_NOTIFICATION_BOUNCER_URL =
    'https://push.zulipchat.com'` line in your `/etc/zulip/settings.py`
    file (i.e. remove the `#` at the start of the line), and
-   [restart your Zulip server](../production/maintain-secure-upgrade.html#updating-settings).
+   [restart your Zulip server](../production/settings.html#making-changes).
    If you installed your Zulip server with a version older than 1.6,
    you'll need to add the line (it won't be there to uncomment).
 
@@ -178,6 +178,21 @@ notifications, for Zulip 1.8 and older.
 
 ## Sending push notifications directly from your server
 
+This section documents an alternative way to send push notifications
+that does not involve using the Mobile Push Notifications Service at
+the cost of needing to compile and distribute modified versions of the
+Zulip mobile apps.
+
+We don't recommend this path -- patching and shipping a production
+mobile app can take dozens of hours to setup even for an experienced
+developer, and even more time to maintain.  And it doesn't provide
+material privacy benefits -- your organization's push notification
+data would still go through Apple/Google's servers, just not Kandra
+Labs'.  Our view is the correct way to optimize for privacy is
+end-to-end encryption of push notifications.  But in the interest of
+transparency, we document in this section roughly what's involved in
+doing so.
+
 As we discussed above, it is impossible for a single app in their
 stores to receive push notifications from multiple, mutually
 untrusted, servers.  The Mobile Push Notification Service is one of
@@ -205,7 +220,7 @@ the app stores yourself.
 If you've done that work, the Zulip server configuration for sending
 push notifications through the new app is quite straightforward:
 * Create a
-  [FCM push notifications](https://developers.google.com/cloud-messaging/android/client)
+  [FCM push notifications](https://firebase.google.com/docs/cloud-messaging)
   key in the Google Developer console and set `android_gcm_api_key` in
   `/etc/zulip/zulip-secrets.conf` to that key.
 * Register for a
@@ -213,6 +228,8 @@ push notifications through the new app is quite straightforward:
   from Apple's developer console.  Set `APNS_SANDBOX=False` and
   `APNS_CERT_FILE` to be the path of your APNS certificate file in
   `/etc/zulip/settings.py`.
+* Set the `APNS_TOPIC` and `ZULIP_IOS_APP_ID` settings to the ID for
+  your app (for the official Zulip apps, they are both `org.zulip.Zulip`).
 * Restart the Zulip server.
 
 [apple-docs]: https://developer.apple.com/library/content/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/APNSOverview.html

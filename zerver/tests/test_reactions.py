@@ -330,6 +330,8 @@ class ReactionEventTest(ZulipTestCase):
         self.assertEqual(event['message_id'], pm_id)
 
 class EmojiReactionBase(ZulipTestCase):
+    """Reusable testing functions for emoji reactions tests.  Be careful when
+    changing this: It's used in test_retention.py as well."""
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.reaction_type = 'realm_emoji'
         super().__init__(*args, **kwargs)
@@ -381,6 +383,7 @@ class EmojiReactionBase(ZulipTestCase):
 
 class DefaultEmojiReactionTests(EmojiReactionBase):
     def setUp(self) -> None:
+        super().setUp()
         self.reaction_type = 'unicode_emoji'
         reaction_info = {
             'emoji_name': 'hamburger',
@@ -618,6 +621,7 @@ class ZulipExtraEmojiReactionTest(EmojiReactionBase):
 
 class RealmEmojiReactionTests(EmojiReactionBase):
     def setUp(self) -> None:
+        super().setUp()
         green_tick_emoji = RealmEmoji.objects.get(name="green_tick")
         self.default_reaction_info = {
             'emoji_name': 'green_tick',

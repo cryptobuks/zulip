@@ -1,7 +1,3 @@
-var unread_ops = (function () {
-
-var exports = {};
-
 exports.mark_all_as_read = function (cont) {
     unread.declare_bankruptcy();
     unread_ui.update_unread_counts();
@@ -29,7 +25,7 @@ exports.process_read_messages_event = function (message_ids) {
         actually read locally (and which we may not have even
         loaded locally).
     */
-    var options = {from: 'server'};
+    const options = {from: 'server'};
 
     message_ids = unread.get_unread_message_ids(message_ids);
     if (message_ids.length === 0) {
@@ -40,12 +36,12 @@ exports.process_read_messages_event = function (message_ids) {
         if (current_msg_list === message_list.narrowed) {
             // I'm not sure this entirely makes sense for all server
             // notifications.
-            unread.messages_read_in_narrow = true;
+            unread.set_messages_read_in_narrow(true);
         }
 
         unread.mark_as_read(message_id);
 
-        var message = message_store.get(message_id);
+        const message = message_store.get(message_id);
 
         if (message) {
             process_newly_read_message(message, options);
@@ -60,7 +56,6 @@ exports.process_read_messages_event = function (message_ids) {
 // Skips any messages that are already marked as read.
 exports.notify_server_messages_read = function (messages, options) {
     options = options || {};
-
     messages = unread.get_unread_messages(messages);
     if (messages.length === 0) {
         return;
@@ -70,7 +65,7 @@ exports.notify_server_messages_read = function (messages, options) {
 
     _.each(messages, function (message) {
         if (current_msg_list === message_list.narrowed) {
-            unread.messages_read_in_narrow = true;
+            unread.set_messages_read_in_narrow(true);
         }
 
         unread.mark_as_read(message.id);
@@ -91,7 +86,8 @@ exports.process_visible = function () {
         return;
     }
 
-    if (message_viewport.bottom_message_visible()) {
+    if (message_viewport.bottom_message_visible() &&
+            current_msg_list.can_mark_messages_read()) {
         exports.mark_current_list_as_read();
     }
 };
@@ -119,9 +115,4 @@ exports.mark_topic_as_read = function (stream_id, topic, cont) {
 };
 
 
-return exports;
-}());
-if (typeof module !== 'undefined') {
-    module.exports = unread_ops;
-}
-window.unread_ops = unread_ops;
+window.unread_ops = exports;

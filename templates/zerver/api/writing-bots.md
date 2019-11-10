@@ -32,7 +32,7 @@ On this page you'll find:
 
 *Hint: `provision` installs the `zulip`, `zulip_bots`, and
  `zulip_botserver` packages in developer mode. This enables you to
- make modify these packages and then run your modified code without
+ modify these packages and then run your modified code without
  having to first re-install the packages or re-provision.*
 
 ## Writing a bot
@@ -388,19 +388,22 @@ refactor them.
  https://github.com/zulip/python-zulip-api/tree/master/zulip_bots/zulip_bots/bots/helloworld)
  bot.
 
-    from zulip_bots.test_lib import StubBotTestCase
+```
+from zulip_bots.test_lib import StubBotTestCase
 
-    class TestHelpBot(StubBotTestCase):
-        bot_name = "helloworld"  # type: str
+class TestHelpBot(StubBotTestCase):
+    bot_name = "helloworld"  # type: str
 
-        def test_bot(self) -> None:
-            dialog = [
-                ('', 'beep boop'),
-                ('help', 'beep boop'),
-                ('foo', 'beep boop'),
-            ]
+    def test_bot(self) -> None:
+        dialog = [
+            ('', 'beep boop'),
+            ('help', 'beep boop'),
+            ('foo', 'beep boop'),
+        ]
 
-            self.verify_dialog(dialog)
+        self.verify_dialog(dialog)
+
+```
 
 The `helloworld` bot replies with "beep boop" to every message @-mentioning it.  We
 want our test to verify that the bot **actually** does that.
@@ -457,7 +460,7 @@ following helper method:
         # self.assert_bot_response(...)
 
 `mock_http_conversation(fixture_name)` patches `requests.get` and returns the data specified
-in the file `fixtures/<fixture_name>.json`. Use the following JSON code as a skeleton for new
+in the file `fixtures/{fixture_name}.json`. Use the following JSON code as a skeleton for new
 fixtures:
 ```
 {
@@ -475,9 +478,9 @@ fixtures:
 For an example, check out the [giphy bot](
 https://github.com/zulip/python-zulip-api/tree/master/zulip_bots/zulip_bots/bots/giphy).
 
-*Tip: You can use [requestbin](https://requestbin.fullcontact.com/)
-or a similar tool to capture payloads from the
-service your bot is interacting with.*
+*Tip: You can use [requestbin](https://requestbin.com/) or a similar
+tool to capture payloads from the service your bot is interacting
+with.*
 
 #### Examples
 

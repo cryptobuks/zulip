@@ -44,7 +44,7 @@ to this file.
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(TOOLS_DIR))
 from tools.lib.test_script import (
-    get_provisioning_status,
+    assert_provisioning_status_ok,
 )
 
 parser.add_argument('--test',
@@ -67,12 +67,7 @@ parser.add_argument('--enable-tornado-logging',
                     default=False, help='Enable access logs from tornado proxy server.')
 options = parser.parse_args()
 
-if not options.force:
-    ok, msg = get_provisioning_status()
-    if not ok:
-        print(msg)
-        print('If you really know what you are doing, use --force to run anyway.')
-        sys.exit(1)
+assert_provisioning_status_ok(options.force)
 
 if options.interface is None:
     user_id = os.getuid()
@@ -138,9 +133,8 @@ else:
 # Required for compatibility python versions.
 if not os.path.exists(os.path.dirname(pid_file_path)):
     os.makedirs(os.path.dirname(pid_file_path))
-pid_file = open(pid_file_path, 'w+')
-pid_file.write(str(os.getpgrp()) + "\n")
-pid_file.close()
+with open(pid_file_path, 'w+') as f:
+    f.write(str(os.getpgrp()) + "\n")
 
 # Pass --nostatic because we configure static serving ourselves in
 # zulip/urls.py.
@@ -155,15 +149,12 @@ cmds = [['./manage.py', 'runserver'] +
         ['/srv/zulip-thumbor-venv/bin/thumbor', '-c', './zthumbor/thumbor.conf',
          '-p', '%s' % (thumbor_port,)]]
 if options.test:
-    # We just need to compile handlebars templates and webpack assets
-    # once at startup, not run a daemon, in test mode.  Additionally,
-    # webpack-dev-server doesn't support running 2 copies on the same
-    # system, so this model lets us run the casper tests with a running
-    # development server.
-    subprocess.check_call(['./tools/compile-handlebars-templates'])
+    # We just need to compile webpack assets once at startup, not run a daemon,
+    # in test mode.  Additionally, webpack-dev-server doesn't support running 2
+    # copies on the same system, so this model lets us run the casper tests
+    # with a running development server.
     subprocess.check_call(['./tools/webpack', '--quiet', '--test'])
 else:
-    cmds.append(['./tools/compile-handlebars-templates', 'forever'])
     webpack_cmd = ['./tools/webpack', '--watch', '--port', str(webpack_port)]
     if options.minify:
         webpack_cmd.append('--minify')
@@ -196,7 +187,13 @@ def transform_url(protocol, path, query, target_port, target_host):
 def fetch_request(url, callback, **kwargs):
     # type: (str, Any, **Any) -> Generator[Callable[..., Any], Any, None]
     # use large timeouts to handle polling requests
-    req = httpclient.HTTPRequest(url, connect_timeout=240.0, request_timeout=240.0, **kwargs)
+    req = httpclient.HTTPRequest(
+        url,
+        connect_timeout=240.0,
+        request_timeout=240.0,
+        decompress_response=False,
+        **kwargs
+    )
     client = httpclient.AsyncHTTPClient()
     # wait for response
     response = yield gen.Task(client.fetch, req)
@@ -311,12 +308,9 @@ class CombineHandler(BaseWebsocketHandler):
             self._headers = httputil.HTTPHeaders()  # clear tornado default header
 
             for header, v in response.headers.get_all():
-                if header != 'Content-Length':
-                    # some header appear multiple times, eg 'Set-Cookie'
-                    self.add_header(header, v)
+                # some header appear multiple times, eg 'Set-Cookie'
+                self.add_header(header, v)
             if response.body:
-                # rewrite Content-Length Header by the response
-                self.set_header('Content-Length', len(response.body))
                 self.write(response.body)
         self.finish()
 
@@ -325,6 +319,8 @@ class CombineHandler(BaseWebsocketHandler):
         # type: () -> None
         if 'X-REAL-IP' not in self.request.headers:
             self.request.headers['X-REAL-IP'] = self.request.remote_ip
+        if 'X-FORWARDED_PORT' not in self.request.headers:
+            self.request.headers['X-FORWARDED-PORT'] = str(proxy_port)
         if self.request.headers.get("Upgrade", "").lower() == 'websocket':
             return super().prepare()
         url = transform_url(

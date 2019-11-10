@@ -2,7 +2,7 @@ import datetime
 
 from django.db import models
 
-from zerver.models import AbstractPushDeviceToken
+from zerver.models import AbstractPushDeviceToken, AbstractRealmAuditLog
 from analytics.models import BaseCount
 
 def get_remote_server_by_uuid(uuid: str) -> 'RemoteZulipServer':
@@ -35,6 +35,19 @@ class RemotePushDeviceToken(AbstractPushDeviceToken):
     def __str__(self) -> str:
         return "<RemotePushDeviceToken %s %s>" % (self.server, self.user_id)
 
+class RemoteRealmAuditLog(AbstractRealmAuditLog):
+    """Synced audit data from a remote Zulip server, used primarily for
+    billing.  See RealmAuditLog and AbstractRealmAuditLog for details.
+    """
+    server = models.ForeignKey(RemoteZulipServer, on_delete=models.CASCADE)  # type: RemoteZulipServer
+    realm_id = models.IntegerField(db_index=True)  # type: int
+    # The remote_id field lets us deduplicate data from the remote server
+    remote_id = models.IntegerField(db_index=True)  # type: int
+
+    def __str__(self) -> str:
+        return "<RemoteRealmAuditLog: %s %s %s %s>" % (
+            self.server, self.event_type, self.event_time, self.id)
+
 class RemoteInstallationCount(BaseCount):
     server = models.ForeignKey(RemoteZulipServer, on_delete=models.CASCADE)  # type: RemoteZulipServer
     # The remote_id field lets us deduplicate data from the remote server
@@ -42,6 +55,9 @@ class RemoteInstallationCount(BaseCount):
 
     class Meta:
         unique_together = ("server", "property", "subgroup", "end_time")
+        index_together = [
+            ["server", "remote_id"],
+        ]
 
     def __str__(self) -> str:
         return "<InstallationCount: %s %s %s>" % (self.property, self.subgroup, self.value)
@@ -55,7 +71,10 @@ class RemoteRealmCount(BaseCount):
 
     class Meta:
         unique_together = ("server", "realm_id", "property", "subgroup", "end_time")
-        index_together = ["property", "end_time"]
+        index_together = [
+            ["property", "end_time"],
+            ["server", "remote_id"],
+        ]
 
     def __str__(self) -> str:
         return "%s %s %s %s %s" % (self.server, self.realm_id, self.property, self.subgroup, self.value)

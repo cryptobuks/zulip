@@ -15,7 +15,7 @@ set_global('activity', {
 });
 
 set_global('navigator', {
-    userAgent: '',
+    platform: '',
 });
 
 set_global('page_params', {
@@ -24,7 +24,7 @@ set_global('page_params', {
 set_global('overlays', {
 });
 
-var noop = () => {};
+const noop = () => {};
 
 // jQuery stuff should go away if we make an initialize() method.
 set_global('document', 'document-stub');
@@ -32,7 +32,8 @@ set_global('$', global.make_zjquery());
 $.fn.keydown = noop;
 $.fn.keypress = noop;
 
-var hotkey = zrequire('hotkey');
+const hotkey = zrequire('hotkey');
+zrequire('common');
 
 set_global('list_util', {
 });
@@ -48,6 +49,9 @@ set_global('current_msg_list', {
         };
     },
     selected_row: function () {},
+    get_row: function () {
+        return 101;
+    },
 });
 
 function return_true() { return true; }
@@ -99,6 +103,7 @@ run_test('mappings', () => {
     assert.equal(map_press(106).name, 'vim_down'); // j
 
     assert.equal(map_down(219, false, true).name, 'escape'); // ctrl + [
+    assert.equal(map_down(67, false, true).name, 'copy_with_c'); // ctrl + c
     assert.equal(map_down(75, false, true).name, 'search_with_k'); // ctrl + k
     assert.equal(map_down(83, false, true).name, 'star_message'); // ctrl + s
     assert.equal(map_down(190, false, true).name, 'narrow_to_compose_target'); // ctrl + .
@@ -107,7 +112,6 @@ run_test('mappings', () => {
     assert.equal(map_down(47), undefined);
     assert.equal(map_press(27), undefined);
     assert.equal(map_down(27, true), undefined);
-    assert.equal(map_down(67, false, true), undefined); // ctrl + c
     assert.equal(map_down(86, false, true), undefined); // ctrl + v
     assert.equal(map_down(90, false, true), undefined); // ctrl + z
     assert.equal(map_down(84, false, true), undefined); // ctrl + t
@@ -120,6 +124,7 @@ run_test('mappings', () => {
     assert.equal(map_down(88, false, true), undefined); // ctrl + x
     assert.equal(map_down(78, false, true), undefined); // ctrl + n
     assert.equal(map_down(77, false, true), undefined); // ctrl + m
+    assert.equal(map_down(67, false, false, true), undefined); // cmd + c
     assert.equal(map_down(75, false, false, true), undefined); // cmd + k
     assert.equal(map_down(83, false, false, true), undefined); // cmd + s
     assert.equal(map_down(75, true, true), undefined); // shift + ctrl + k
@@ -127,22 +132,24 @@ run_test('mappings', () => {
     assert.equal(map_down(219, true, true, false), undefined); // shift + ctrl + [
 
     // CMD tests for MacOS
-    global.navigator.userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.167 Safari/537.36";
+    global.navigator.platform = "MacIntel";
     assert.equal(map_down(219, false, true, false).name, 'escape'); // ctrl + [
     assert.equal(map_down(219, false, false, true), undefined); // cmd + [
+    assert.equal(map_down(67, false, true, true).name, 'copy_with_c'); // ctrl + c
+    assert.equal(map_down(67, false, true, false), undefined); // cmd + c
     assert.equal(map_down(75, false, false, true).name, 'search_with_k'); // cmd + k
     assert.equal(map_down(75, false, true, false), undefined); // ctrl + k
     assert.equal(map_down(83, false, false, true).name, 'star_message'); // cmd + s
     assert.equal(map_down(83, false, true, false), undefined); // ctrl + s
     assert.equal(map_down(190, false, false, true).name, 'narrow_to_compose_target'); // cmd + .
     assert.equal(map_down(190, false, true, false), undefined); // ctrl + .
-    // Reset userAgent
-    global.navigator.userAgent = '';
+    // Reset platform
+    global.navigator.platform = '';
 });
 
 run_test('basic_chars', () => {
     function process(s) {
-        var e = {
+        const e = {
             which: s.charCodeAt(0),
         };
         try {
@@ -170,7 +177,7 @@ run_test('basic_chars', () => {
 
     // Unmapped keys should immediately return false, without
     // calling any functions outside of hotkey.js.
-    assert_unmapped('abefhlmotyz');
+    assert_unmapped('abfhlmotyz');
     assert_unmapped('BEFHILNOQTUWXYZ');
 
     // We have to skip some checks due to the way the code is
@@ -259,7 +266,7 @@ run_test('basic_chars', () => {
     assert_mapping('d', 'drafts.launch');
 
     // Next, test keys that only work on a selected message.
-    var message_view_only_keys = '@+>RjJkKsSuvi:GM';
+    const message_view_only_keys = '@+>RjJkKsSuvi:GM';
 
     // Check that they do nothing without a selected message
     global.current_msg_list.empty = return_true;
@@ -289,6 +296,7 @@ run_test('basic_chars', () => {
     assert_mapping('i', 'popovers.open_message_menu');
     assert_mapping(':', 'reactions.open_reactions_popover', true);
     assert_mapping('>', 'compose_actions.quote_and_reply');
+    assert_mapping('e', 'message_edit.start');
 
     overlays.is_active = return_true;
     overlays.lightbox_open = return_true;
@@ -316,7 +324,7 @@ run_test('basic_chars', () => {
 });
 
 run_test('motion_keys', () => {
-    var codes = {
+    const codes = {
         down_arrow: 40,
         end: 35,
         home: 36,
@@ -330,7 +338,7 @@ run_test('motion_keys', () => {
     };
 
     function process(name, shiftKey, ctrlKey) {
-        var e = {
+        const e = {
             which: codes[name],
             shiftKey: shiftKey,
             ctrlKey: ctrlKey,

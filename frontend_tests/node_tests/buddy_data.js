@@ -129,7 +129,7 @@ run_test('simple search', () => {
 });
 
 run_test('bulk_data_hacks', () => {
-    var user_ids;
+    let user_ids;
 
     // Even though we have 1000 users, we only get the 400 active
     // users.  This is a consequence of buddy_data.maybe_shrink_list.
@@ -199,7 +199,7 @@ run_test('level', () => {
 
 run_test('user_last_seen_time_status', () => {
     assert.equal(buddy_data.user_last_seen_time_status(selma.user_id),
-                 'translated: Online now');
+                 'translated: Active now');
 
     page_params.realm_is_zephyr_mirror_realm = true;
     assert.equal(buddy_data.user_last_seen_time_status(old_user.user_id),

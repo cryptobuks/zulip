@@ -1,19 +1,27 @@
 // See https://zulip.readthedocs.io/en/latest/subsystems/pointer.html for notes on
 // how this system is designed.
 
-var pointer = (function () {
-
-var exports = {};
-
 exports.recenter_pointer_on_display = false;
+exports.set_recenter_pointer_on_display = function (value) {
+    exports.recenter_pointer_on_display = value;
+};
 
 // Toggles re-centering the pointer in the window
 // when All Messages is next clicked by the user
 exports.suppress_scroll_pointer_update = false;
+exports.set_suppress_scroll_pointer_update = function (value) {
+    exports.suppress_scroll_pointer_update = value;
+};
 exports.furthest_read = -1;
+exports.set_furthest_read = function (value) {
+    exports.furthest_read = value;
+};
 exports.server_furthest_read = -1;
+exports.set_server_furthest_read = function (value) {
+    exports.server_furthest_read = value;
+};
 
-var pointer_update_in_flight = false;
+let pointer_update_in_flight = false;
 
 function update_pointer() {
     if (!pointer_update_in_flight) {
@@ -21,9 +29,9 @@ function update_pointer() {
         return channel.post({
             url: '/json/users/me/pointer',
             idempotent: true,
-            data: {pointer: pointer.furthest_read},
+            data: {pointer: exports.furthest_read},
             success: function () {
-                pointer.server_furthest_read = pointer.furthest_read;
+                exports.server_furthest_read = exports.furthest_read;
                 pointer_update_in_flight = false;
             },
             error: function () {
@@ -38,7 +46,7 @@ function update_pointer() {
 
 exports.send_pointer_update = function () {
     // Only bother if you've read new messages.
-    if (pointer.furthest_read > pointer.server_furthest_read) {
+    if (exports.furthest_read > exports.server_furthest_read) {
         update_pointer();
     }
 };
@@ -46,7 +54,7 @@ exports.send_pointer_update = function () {
 function unconditionally_send_pointer_update() {
     if (pointer_update_in_flight) {
         // Keep trying.
-        var deferred = $.Deferred();
+        const deferred = $.Deferred();
 
         setTimeout(function () {
             deferred.resolve(unconditionally_send_pointer_update());
@@ -62,7 +70,7 @@ exports.fast_forward_pointer = function () {
         idempotent: true,
         success: function (data) {
             unread_ops.mark_all_as_read(function () {
-                pointer.furthest_read = data.max_message_id;
+                exports.furthest_read = data.max_message_id;
                 unconditionally_send_pointer_update().then(function () {
                     reload.initiate({immediate: true,
                                      save_pointer: false,
@@ -75,17 +83,17 @@ exports.fast_forward_pointer = function () {
 };
 
 exports.initialize = function initialize() {
-    pointer.server_furthest_read = page_params.pointer;
+    exports.server_furthest_read = page_params.pointer;
     if (page_params.orig_initial_pointer !== undefined &&
-        page_params.orig_initial_pointer > pointer.server_furthest_read) {
-        pointer.server_furthest_read = page_params.orig_initial_pointer;
+        page_params.orig_initial_pointer > exports.server_furthest_read) {
+        exports.server_furthest_read = page_params.orig_initial_pointer;
     }
-    pointer.furthest_read = pointer.server_furthest_read;
+    exports.furthest_read = exports.server_furthest_read;
 
     // We only send pointer updates when the user has been idle for a
     // short while to avoid hammering the server
     $(document).idle({idle: 1000,
-                      onIdle: pointer.send_pointer_update,
+                      onIdle: exports.send_pointer_update,
                       keepTracking: true});
 
     $(document).on('message_selected.zulip', function (event) {
@@ -96,30 +104,27 @@ exports.initialize = function initialize() {
         // Additionally, don't advance the pointer server-side
         // if the selected message is local-only
         if (event.msg_list === home_msg_list && page_params.narrow_stream === undefined) {
-            if (event.id > pointer.furthest_read) {
-                var msg = home_msg_list.get(event.id);
+            if (event.id > exports.furthest_read) {
+                const msg = home_msg_list.get(event.id);
                 if (!msg.locally_echoed) {
-                    pointer.furthest_read = event.id;
+                    exports.furthest_read = event.id;
                 }
             }
         }
 
         if (event.mark_read && event.previously_selected !== -1) {
             // Mark messages between old pointer and new pointer as read
-            var messages;
+            let messages;
             if (event.id < event.previously_selected) {
                 messages = event.msg_list.message_range(event.id, event.previously_selected);
             } else {
                 messages = event.msg_list.message_range(event.previously_selected, event.id);
             }
-            unread_ops.notify_server_messages_read(messages, {from: 'pointer'});
+            if (event.msg_list.can_mark_messages_read()) {
+                unread_ops.notify_server_messages_read(messages, {from: 'pointer'});
+            }
         }
     });
 };
 
-return exports;
-}());
-if (typeof module !== 'undefined') {
-    module.exports = pointer;
-}
-window.pointer = pointer;
+window.pointer = exports;

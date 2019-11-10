@@ -1,4 +1,3 @@
-
 import itertools
 import logging
 import re
@@ -9,7 +8,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from typing import Any, Callable, Dict, List, \
-    Optional, Set, Tuple, Type, Union, cast
+    Optional, Set, Tuple, Type, Union
 
 import pytz
 from django.conf import settings
@@ -21,6 +20,7 @@ from django.shortcuts import render
 from django.template import loader
 from django.utils.timezone import now as timezone_now, utc as timezone_utc
 from django.utils.translation import ugettext as _
+from django.utils.timesince import timesince
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError
 from jinja2 import Markup as mark_safe
@@ -29,23 +29,25 @@ from analytics.lib.counts import COUNT_STATS, CountStat
 from analytics.lib.time_utils import time_range
 from analytics.models import BaseCount, InstallationCount, \
     RealmCount, StreamCount, UserCount, last_successful_fill, installation_epoch
+from confirmation.models import Confirmation, confirmation_url, _properties
 from zerver.decorator import require_server_admin, require_server_admin_api, \
     to_non_negative_int, to_utc_datetime, zulip_login_required, require_non_guest_user
 from zerver.lib.exceptions import JsonableError
-from zerver.lib.json_encoder_for_html import JSONEncoderForHTML
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_success
 from zerver.lib.timestamp import convert_to_UTC, timestamp_to_datetime
 from zerver.lib.realm_icon import realm_icon_url
 from zerver.views.invite import get_invitee_emails_set
 from zerver.lib.subdomains import get_subdomain_from_hostname
-from zerver.lib.actions import do_change_plan_type
+from zerver.lib.actions import do_change_plan_type, do_deactivate_realm, \
+    do_reactivate_realm, do_scrub_realm
+from confirmation.settings import STATUS_ACTIVE
 
 if settings.BILLING_ENABLED:
     from corporate.lib.stripe import attach_discount_to_realm, get_discount_for_realm
 
-from zerver.models import Client, get_realm, Realm, \
-    UserActivity, UserActivityInterval, UserProfile
+from zerver.models import Client, get_realm, Realm, UserActivity, UserActivityInterval, \
+    UserProfile, PreregistrationUser, MultiuseInvite
 
 if settings.ZILENCER_ENABLED:
     from zilencer.models import RemoteInstallationCount, RemoteRealmCount, \
@@ -67,22 +69,23 @@ def render_stats(request: HttpRequest, data_url_suffix: str, target_name: str,
     return render(request,
                   'analytics/stats.html',
                   context=dict(target_name=target_name,
-                               page_params=JSONEncoderForHTML().encode(page_params)))
+                               page_params=page_params))
 
 @zulip_login_required
 def stats(request: HttpRequest) -> HttpResponse:
     realm = request.user.realm
     if request.user.is_guest:
         # TODO: Make @zulip_login_required pass the UserProfile so we
-        # can use @require_non_guest_human_user
+        # can use @require_member_or_admin
         raise JsonableError(_("Not allowed for guest users"))
     return render_stats(request, '', realm.name or realm.string_id)
 
 @require_server_admin
 @has_request_variables
 def stats_for_realm(request: HttpRequest, realm_str: str) -> HttpResponse:
-    realm = get_realm(realm_str)
-    if realm is None:
+    try:
+        realm = get_realm(realm_str)
+    except Realm.DoesNotExist:
         return HttpResponseNotFound("Realm %s does not exist" % (realm_str,))
 
     return render_stats(request, '/realm/%s' % (realm_str,), realm.name or realm.string_id)
@@ -99,8 +102,9 @@ def stats_for_remote_realm(request: HttpRequest, remote_server_id: str,
 @has_request_variables
 def get_chart_data_for_realm(request: HttpRequest, user_profile: UserProfile,
                              realm_str: str, **kwargs: Any) -> HttpResponse:
-    realm = get_realm(realm_str)
-    if realm is None:
+    try:
+        realm = get_realm(realm_str)
+    except Realm.DoesNotExist:
         raise JsonableError(_("Invalid organization"))
 
     return get_chart_data(request=request, user_profile=user_profile, realm=realm, **kwargs)
@@ -122,7 +126,7 @@ def stats_for_installation(request: HttpRequest) -> HttpResponse:
 def stats_for_remote_installation(request: HttpRequest, remote_server_id: str) -> HttpResponse:
     server = RemoteZulipServer.objects.get(id=remote_server_id)
     return render_stats(request, '/remote/%s/installation' % (server.id,),
-                        'remote Installation %s' % (server.hostname), True, True)
+                        'remote Installation %s' % (server.hostname,), True, True)
 
 @require_server_admin_api
 @has_request_variables
@@ -240,7 +244,7 @@ def get_chart_data(request: HttpRequest, user_profile: UserProfile, chart_name: 
         if end is None:
             end = max(last_successful_fill(stat.property) or
                       datetime.min.replace(tzinfo=timezone_utc) for stat in stats)
-        if end is None or start > end:
+        if start > end:
             logging.warning("User from realm %s attempted to access /stats, but the computed "
                             "start time: %s (creation of realm or installation) is later than the computed "
                             "end time: %s (last successful analytics update). Is the "
@@ -262,7 +266,7 @@ def get_chart_data(request: HttpRequest, user_profile: UserProfile, chart_name: 
     id_value = {
         InstallationCount: -1,
         RealmCount: realm.id,
-        RemoteInstallationCount: cast(RemoteZulipServer, server).id if server is not None else None,
+        RemoteInstallationCount: server.id if server is not None else None,
         # TODO: RemoteRealmCount logic doesn't correctly handle
         # filtering by server_id as well.
         RemoteRealmCount: remote_realm_id,
@@ -403,7 +407,7 @@ def get_realm_day_counts() -> Dict[str, Dict[str, str]]:
     query = '''
         select
             r.string_id,
-            (now()::date - pub_date::date) age,
+            (now()::date - date_sent::date) age,
             count(*) cnt
         from zerver_message m
         join zerver_userprofile up on up.id = m.sender_id
@@ -412,7 +416,7 @@ def get_realm_day_counts() -> Dict[str, Dict[str, str]]:
         where
             (not up.is_bot)
         and
-            pub_date > now()::date - interval '8 day'
+            date_sent > now()::date - interval '8 day'
         and
             c.name not in ('zephyr_mirror', 'ZulipMonitoring')
         group by
@@ -518,7 +522,7 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
                 FROM (
                     SELECT
                         realm.id as realm_id,
-                        up.email
+                        up.delivery_email
                     FROM zerver_useractivity ua
                     JOIN zerver_userprofile up
                         ON up.id = ua.user_profile_id
@@ -535,7 +539,7 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
                             '/json/users/me/pointer',
                             'update_pointer_backend'
                         )
-                    GROUP by realm.id, up.email
+                    GROUP by realm.id, up.delivery_email
                     HAVING max(last_visit) > now() - interval '7 day'
                 ) as wau_users
                 GROUP BY realm_id
@@ -573,10 +577,10 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
     # Fetch all the realm administrator users
     realm_admins = defaultdict(list)  # type: Dict[str, List[str]]
     for up in UserProfile.objects.select_related("realm").filter(
-        is_realm_admin=True,
+        role=UserProfile.ROLE_REALM_ADMINISTRATOR,
         is_active=True
     ):
-        realm_admins[up.realm.string_id].append(up.email)
+        realm_admins[up.realm.string_id].append(up.delivery_email)
 
     for row in rows:
         row['date_created_day'] = row['date_created'].strftime('%Y-%m-%d')
@@ -736,7 +740,7 @@ def sent_messages_report(realm: str) -> str:
         ) as series
         left join (
             select
-                pub_date::date pub_date,
+                date_sent::date date_sent,
                 count(*) cnt
             from zerver_message m
             join zerver_userprofile up on up.id = m.sender_id
@@ -746,16 +750,16 @@ def sent_messages_report(realm: str) -> str:
             and
                 (not up.is_bot)
             and
-                pub_date > now() - interval '2 week'
+                date_sent > now() - interval '2 week'
             group by
-                pub_date::date
+                date_sent::date
             order by
-                pub_date::date
+                date_sent::date
         ) humans on
-            series.day = humans.pub_date
+            series.day = humans.date_sent
         left join (
             select
-                pub_date::date pub_date,
+                date_sent::date date_sent,
                 count(*) cnt
             from zerver_message m
             join zerver_userprofile up on up.id = m.sender_id
@@ -765,13 +769,13 @@ def sent_messages_report(realm: str) -> str:
             and
                 up.is_bot
             and
-                pub_date > now() - interval '2 week'
+                date_sent > now() - interval '2 week'
             group by
-                pub_date::date
+                date_sent::date
             order by
-                pub_date::date
+                date_sent::date
         ) bots on
-            series.day = bots.pub_date
+            series.day = bots.date_sent
     '''
     cursor = connection.cursor()
     cursor.execute(query, [realm, realm])
@@ -1026,6 +1030,46 @@ def get_activity(request: HttpRequest) -> HttpResponse:
         context=dict(data=data, title=title, is_home=True),
     )
 
+def get_confirmations(types: List[int], object_ids: List[int],
+                      hostname: Optional[str]=None) -> List[Dict[str, Any]]:
+    lowest_datetime = timezone_now() - timedelta(days=30)
+    confirmations = Confirmation.objects.filter(type__in=types, object_id__in=object_ids,
+                                                date_sent__gte=lowest_datetime)
+    confirmation_dicts = []
+    for confirmation in confirmations:
+        realm = confirmation.realm
+        content_object = confirmation.content_object
+
+        if realm is not None:
+            realm_host = realm.host
+        elif isinstance(content_object, Realm):
+            realm_host = content_object.host
+        else:
+            realm_host = hostname
+
+        type = confirmation.type
+        days_to_activate = _properties[type].validity_in_days
+        expiry_date = confirmation.date_sent + timedelta(days=days_to_activate)
+
+        if hasattr(content_object, "status"):
+            if content_object.status == STATUS_ACTIVE:
+                link_status = "Link has been clicked"
+            else:
+                link_status = "Link has never been clicked"
+        else:
+            link_status = ""
+
+        if timezone_now() < expiry_date:
+            expires_in = timesince(confirmation.date_sent, expiry_date)
+        else:
+            expires_in = "Expired"
+
+        url = confirmation_url(confirmation.confirmation_key, realm_host, type)
+        confirmation_dicts.append({"object": confirmation.content_object,
+                                   "url": url, "type": type, "link_status": link_status,
+                                   "expires_in": expires_in})
+    return confirmation_dicts
+
 @require_server_admin
 def support(request: HttpRequest) -> HttpResponse:
     context = {}  # type: Dict[str, Any]
@@ -1038,9 +1082,10 @@ def support(request: HttpRequest) -> HttpResponse:
             new_plan_type = int(new_plan_type)
             current_plan_type = realm.plan_type
             do_change_plan_type(realm, new_plan_type)
-            msg = "Plan type of {} changed to {} from {} ".format(realm.name, get_plan_name(new_plan_type),
-                                                                  get_plan_name(current_plan_type))
-            context["plan_type_msg"] = msg
+            msg = "Plan type of {} changed from {} to {} ".format(realm.name,
+                                                                  get_plan_name(current_plan_type),
+                                                                  get_plan_name(new_plan_type))
+            context["message"] = msg
 
         new_discount = request.POST.get("discount", None)
         if new_discount is not None:
@@ -1048,20 +1093,28 @@ def support(request: HttpRequest) -> HttpResponse:
             current_discount = get_discount_for_realm(realm)
             attach_discount_to_realm(realm, new_discount)
             msg = "Discount of {} changed to {} from {} ".format(realm.name, new_discount, current_discount)
-            context["discount_msg"] = msg
+            context["message"] = msg
+
+        status = request.POST.get("status", None)
+        if status is not None:
+            if status == "active":
+                do_reactivate_realm(realm)
+                context["message"] = "{} reactivated.".format(realm.name)
+            elif status == "deactivated":
+                do_deactivate_realm(realm, request.user)
+                context["message"] = "{} deactivated.".format(realm.name)
+
+        scrub_realm = request.POST.get("scrub_realm", None)
+        if scrub_realm is not None:
+            if scrub_realm == "scrub_realm":
+                do_scrub_realm(realm)
+                context["message"] = "{} scrubbed.".format(realm.name)
 
     query = request.GET.get("q", None)
     if query:
         key_words = get_invitee_emails_set(query)
 
-        users = UserProfile.objects.filter(email__in=key_words)
-        if users:
-            for user in users:
-                user.realm.realm_icon_url = realm_icon_url(user.realm)
-                user.realm.admins = UserProfile.objects.filter(realm=user.realm, is_realm_admin=True)
-                user.realm.default_discount = get_discount_for_realm(user.realm)
-            context["users"] = users
-
+        context["users"] = UserProfile.objects.filter(delivery_email__in=key_words)
         realms = set(Realm.objects.filter(string_id__in=key_words))
 
         for key_word in key_words:
@@ -1072,18 +1125,36 @@ def support(request: HttpRequest) -> HttpResponse:
                 if parse_result.port:
                     hostname = "{}:{}".format(hostname, parse_result.port)
                 subdomain = get_subdomain_from_hostname(hostname)
-                realm = get_realm(subdomain)
-                if realm is not None:
-                    realms.add(realm)
+                try:
+                    realms.add(get_realm(subdomain))
+                except Realm.DoesNotExist:
+                    pass
             except ValidationError:
                 pass
 
-        if realms:
-            for realm in realms:
-                realm.realm_icon_url = realm_icon_url(realm)
-                realm.admins = UserProfile.objects.filter(realm=realm, is_realm_admin=True)
-                realm.default_discount = get_discount_for_realm(realm)
-            context["realms"] = realms
+        context["realms"] = realms
+
+        confirmations = []  # type: List[Dict[str, Any]]
+
+        preregistration_users = PreregistrationUser.objects.filter(email__in=key_words)
+        confirmations += get_confirmations([Confirmation.USER_REGISTRATION, Confirmation.INVITATION,
+                                            Confirmation.REALM_CREATION], preregistration_users,
+                                           hostname=request.get_host())
+
+        multiuse_invites = MultiuseInvite.objects.filter(realm__in=realms)
+        confirmations += get_confirmations([Confirmation.MULTIUSE_INVITE], multiuse_invites)
+
+        confirmations += get_confirmations([Confirmation.REALM_REACTIVATION], [realm.id for realm in realms])
+
+        context["confirmations"] = confirmations
+
+    def realm_admin_emails(realm: Realm) -> str:
+        return ", ".join(realm.get_human_admin_users().values_list("delivery_email", flat=True))
+
+    context["realm_admin_emails"] = realm_admin_emails
+    context["get_discount_for_realm"] = get_discount_for_realm
+    context["realm_icon_url"] = realm_icon_url
+    context["Confirmation"] = Confirmation
     return render(request, 'analytics/support.html', context=context)
 
 def get_user_activity_records_for_realm(realm: str, is_bot: bool) -> QuerySet:
@@ -1362,7 +1433,7 @@ def get_realm_activity(request: HttpRequest, realm_str: str) -> HttpResponse:
     all_user_records = {}  # type: Dict[str, Any]
 
     try:
-        admins = Realm.objects.get(string_id=realm_str).get_admin_users()
+        admins = Realm.objects.get(string_id=realm_str).get_human_admin_users()
     except Realm.DoesNotExist:
         return HttpResponseNotFound("Realm %s does not exist" % (realm_str,))
 

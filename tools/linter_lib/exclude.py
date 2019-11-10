@@ -9,7 +9,8 @@ EXCLUDED_FILES = [
     # Transifex syncs translation.json files without trailing
     # newlines; there's nothing other than trailing newlines we'd be
     # checking for in these anyway.
-    "static/locale",
+    "locale",
+    "tools/check-openapi",
 ]
 
 PUPPET_CHECK_RULES_TO_EXCLUDE = [

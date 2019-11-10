@@ -1,12 +1,8 @@
-var server_events_dispatch = (function () {
-
-var exports = {};
-
 exports.dispatch_normal_event = function dispatch_normal_event(event) {
-    var noop = function () {};
+    const noop = function () {};
     switch (event.type) {
     case 'alert_words':
-        alert_words.words = event.alert_words;
+        alert_words.set_words(event.alert_words);
         alert_words_ui.render_alert_words_ui();
         break;
 
@@ -25,8 +21,8 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         settings_streams.update_default_streams_table();
         break;
 
-    case 'delete_message':
-        var msg_id = event.message_id;
+    case 'delete_message': {
+        const msg_id = event.message_id;
         // message is passed to unread.get_unread_messages,
         // which returns all the unread messages out of a given list.
         // So double marking something as read would not occur
@@ -40,6 +36,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         }
         ui.remove_message(msg_id);
         break;
+    }
 
     case 'hotspots':
         hotspots.load_new(event.hotspots);
@@ -62,8 +59,8 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         activity.update_presence_info(event.email, event.presence, event.server_timestamp);
         break;
 
-    case 'restart':
-        var reload_options = {
+    case 'restart': {
+        const reload_options = {
             save_pointer: true,
             save_narrow: true,
             save_compose: true,
@@ -74,6 +71,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         }
         reload.initiate(reload_options);
         break;
+    }
 
     case 'reaction':
         if (event.op === 'add') {
@@ -83,18 +81,23 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         }
         break;
 
-    case 'realm':
-        var realm_settings = {
+    case 'realm': {
+        const realm_settings = {
             add_emoji_by_admins_only: settings_emoji.update_custom_emoji_ui,
             allow_edit_history: noop,
             allow_message_deleting: noop,
             allow_message_editing: noop,
             allow_community_topic_editing: noop,
+            user_group_edit_policy: noop,
+            avatar_changes_disabled: settings_account.update_avatar_change_display,
             bot_creation_policy: settings_bots.update_bot_permissions_ui,
-            create_stream_by_admins_only: noop,
+            create_stream_policy: noop,
+            invite_to_stream_policy: noop,
             default_language: noop,
             default_twenty_four_hour_time: noop,
             description: noop,
+            digest_emails_enabled: noop,
+            digest_weekday: noop,
             email_address_visibility: noop,
             email_changes_disabled: settings_account.update_email_change_display,
             disallow_disposable_email_addresses: noop,
@@ -124,10 +127,17 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             page_params['realm_' + event.property] = event.value;
             realm_settings[event.property]();
             settings_org.sync_realm_settings(event.property);
-            if (event.property === 'create_stream_by_admins_only') {
+            if (event.property === 'create_stream_policy') {
                 if (!page_params.is_admin) {
+                    // TODO: Add waiting_period_threshold logic here.
                     page_params.can_create_streams =
-                        !page_params.realm_create_stream_by_admins_only;
+                        page_params.realm_create_stream_policy === 1;
+                }
+            } else if (event.property === 'invite_to_stream_policy') {
+                if (!page_params.is_admin) {
+                    // TODO: Add waiting_period_threshold logic here.
+                    page_params.can_invite_to_stream =
+                        page_params.realm_invite_to_stream_policy === 1;
                 }
             } else if (event.property === 'notifications_stream_id') {
                 settings_org.render_notifications_stream_ui(
@@ -160,7 +170,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             page_params.realm_icon_source = event.data.icon_source;
             realm_icon.rerender();
 
-            var electron_bridge = window.electron_bridge;
+            const electron_bridge = window.electron_bridge;
             if (electron_bridge !== undefined) {
                 electron_bridge.send_event('realm_icon_url', event.data.icon_url);
             }
@@ -177,6 +187,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         }
 
         break;
+    }
 
     case 'realm_bot':
         if (event.op === 'add') {
@@ -187,7 +198,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             event.bot.is_active = false;
             settings_users.update_user_data(event.bot.user_id, event.bot);
         } else if (event.op === 'delete') {
-            bot_data.delete(event.bot.user_id);
+            bot_data.del(event.bot.user_id);
             settings_users.update_user_data(event.bot.user_id, event.bot);
         } else if (event.op === 'update') {
             if (_.has(event.bot, 'owner_id')) {
@@ -214,8 +225,8 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         settings_linkifiers.populate_filters(page_params.realm_filters);
         break;
 
-    case 'realm_domains':
-        var i;
+    case 'realm_domains': {
+        let i;
         if (event.op === 'add') {
             page_params.realm_domains.push(event.realm_domain);
         } else if (event.op === 'change') {
@@ -236,6 +247,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         }
         settings_org.populate_realm_domains(page_params.realm_domains);
         break;
+    }
 
     case 'realm_user':
         if (event.op === 'add') {
@@ -255,19 +267,21 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
                 event.stream_id,
                 event.property,
                 event.value,
-                event.rendered_description
-            );
+                {
+                    rendered_description: event.rendered_description,
+                    history_public_to_subscribers: event.history_public_to_subscribers,
+                });
             settings_streams.update_default_streams_table();
         } else if (event.op === 'create') {
             stream_data.create_streams(event.streams);
             _.each(event.streams, function (stream) {
-                var sub = stream_data.get_sub_by_id(stream.stream_id);
+                const sub = stream_data.get_sub_by_id(stream.stream_id);
                 stream_data.update_calculated_fields(sub);
                 subs.add_sub_to_table(sub);
             });
         } else if (event.op === 'delete') {
             _.each(event.streams, function (stream) {
-                var was_subscribed = stream_data.get_sub_by_id(stream.stream_id).subscribed;
+                const was_subscribed = stream_data.get_sub_by_id(stream.stream_id).subscribed;
                 subs.remove_stream(stream.stream_id);
                 stream_data.delete_sub(stream.stream_id);
                 if (was_subscribed) {
@@ -291,11 +305,11 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         }
         break;
 
-    case 'submessage':
+    case 'submessage': {
         // The fields in the event don't quite exactly
         // match the layout of a submessage, since there's
         // an event id.  We also want to be explicit here.
-        var submsg = {
+        const submsg = {
             id: event.submessage_id,
             sender_id: event.sender_id,
             msg_type: event.msg_type,
@@ -304,11 +318,12 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         };
         submessage.handle_event(submsg);
         break;
+    }
 
     case 'subscription':
         if (event.op === 'add') {
             _.each(event.subscriptions, function (rec) {
-                var sub = stream_data.get_sub_by_id(rec.stream_id);
+                const sub = stream_data.get_sub_by_id(rec.stream_id);
                 if (sub) {
                     stream_data.update_stream_email_address(sub, rec.email_address);
                     stream_events.mark_subscribed(sub, rec.subscribers, rec.color);
@@ -334,7 +349,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             });
         } else if (event.op === 'remove') {
             _.each(event.subscriptions, function (rec) {
-                var sub = stream_data.get_sub_by_id(rec.stream_id);
+                const sub = stream_data.get_sub_by_id(rec.stream_id);
                 stream_events.mark_unsubscribed(sub);
             });
         } else if (event.op === 'update') {
@@ -360,11 +375,13 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         }
         break;
 
-    case 'update_display_settings':
-        var user_display_settings = [
+    case 'update_display_settings': {
+        const user_display_settings = [
             'default_language',
+            'demote_inactive_streams',
             'dense_mode',
             'emojiset',
+            'fluid_layout_width',
             'high_contrast_mode',
             'night_mode',
             'left_side_userlist',
@@ -390,6 +407,9 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         if (event.setting_name === 'high_contrast_mode') {
             $("body").toggleClass("high-contrast");
         }
+        if (event.setting_name === 'demote_inactive_streams') {
+            stream_list.update_streams_sidebar();
+        }
         if (event.setting_name === 'dense_mode') {
             $("body").toggleClass("less_dense_mode");
             $("body").toggleClass("more_dense_mode");
@@ -410,6 +430,9 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         if (event.setting_name === 'starred_message_counts') {
             starred_messages.rerender_ui();
         }
+        if (event.setting_name === 'fluid_layout_width') {
+            scroll_bar.set_layout_width();
+        }
         if (event.setting_name === 'left_side_userlist') {
             // TODO: Make this change the view immediately rather
             // than requiring a reload or page resize.
@@ -429,15 +452,20 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         }
         settings_display.update_page();
         break;
+    }
 
     case 'update_global_notifications':
         notifications.handle_global_notification_updates(event.notification_name,
                                                          event.setting);
         settings_notifications.update_page();
+        // TODO: This should also do a refresh of the stream_edit UI
+        // if it's currently displayed, possibly reusing some code
+        // from stream_events.js
+        // (E.g. update_stream_push_notifications).
         break;
 
-    case 'update_message_flags':
-        var new_value = event.operation === "add";
+    case 'update_message_flags': {
+        const new_value = event.operation === "add";
         switch (event.flag) {
         case 'starred':
             _.each(event.messages, function (message_id) {
@@ -454,6 +482,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             break;
         }
         break;
+    }
 
     case 'user_group':
         if (event.op === 'add') {
@@ -485,14 +514,12 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             activity.redraw_user(event.user_id);
         }
         break;
+    case 'realm_export':
+        settings_exports.populate_exports_table(event.exports);
+        settings_exports.clear_success_banner();
+        break;
     }
 
 };
 
-return exports;
-
-}());
-if (typeof module !== 'undefined') {
-    module.exports = server_events_dispatch;
-}
-window.server_events_dispatch = server_events_dispatch;
+window.server_events_dispatch = exports;

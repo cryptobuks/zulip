@@ -5,7 +5,6 @@ set_global('narrow_state', {});
 set_global('unread', {});
 set_global('muting', {});
 set_global('stream_popover', {});
-set_global('templates', {});
 set_global('message_list', {});
 
 zrequire('hash_util');
@@ -14,7 +13,7 @@ zrequire('unread');
 zrequire('topic_data');
 zrequire('topic_list');
 
-var devel = {
+const devel = {
     stream_id: 555,
     name: 'devel',
 };
@@ -40,12 +39,12 @@ run_test('topic_list_build_widget', () => {
         return 3;
     };
 
-    var checked_mutes;
-    var rendered;
+    let checked_mutes;
+    let rendered;
 
-    templates.render = function (name, info) {
+    global.stub_templates(function (name, info) {
         assert.equal(name, 'topic_list_item');
-        var expected = {
+        const expected = {
             topic_name: 'coding',
             unread: 3,
             is_zero: false,
@@ -55,7 +54,7 @@ run_test('topic_list_build_widget', () => {
         assert.deepEqual(info, expected);
         rendered = true;
         return '<topic list item>';
-    };
+    });
 
     muting.is_topic_muted = function (stream_id, topic_name) {
         assert.equal(stream_id, devel.stream_id);
@@ -64,16 +63,16 @@ run_test('topic_list_build_widget', () => {
         return false;
     };
 
-    var ul = $('<ul class="topic-list">');
+    const ul = $('<ul class="topic-list">');
 
-    var list_items = [];
+    const list_items = [];
 
     ul.append = function (item) {
         list_items.push(item);
     };
 
-    var parent_elem = $.create('parent_elem');
-    var attached_to_parent;
+    const parent_elem = $.create('parent_elem');
+    let attached_to_parent;
 
     parent_elem.append = function (child) {
         assert.equal(child, ul);
@@ -82,7 +81,7 @@ run_test('topic_list_build_widget', () => {
 
     assert.equal(topic_list.active_stream_id(), undefined);
 
-    var widget = topic_list.widget(parent_elem, devel.stream_id);
+    const widget = topic_list.widget(parent_elem, devel.stream_id);
 
     widget.build_more_topics_section = function () {
         return $('<more topics>');

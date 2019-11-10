@@ -15,16 +15,7 @@ per-stream notification settings.
 
 {tab|curl}
 
-```
-curl -X POST {{ api_url }}/v1/users/me/subscriptions/properties \
-     -u BOT_EMAIL_ADDRESS:BOT_API_KEY \
-     -d 'subscription_data=[{"stream_id": 1, \
-                             "property": "pin_to_top", \
-                             "value": true}, \
-                            {"stream_id": 3, \
-                             "property": "color", \
-                             "value": 'f00'}]'
-```
+{generate_code_example(curl)|/users/me/subscriptions/properties:post|example}
 
 {end_tabs}
 
@@ -35,14 +26,19 @@ curl -X POST {{ api_url }}/v1/users/me/subscriptions/properties \
 The possible values for each `property` and `value` pairs are:
 
 * `color` (string): the hex value of the user's display color for the stream.
-* `in_home_view` (boolean): whether the stream should be visible in the home
-    view (`true`) or muted and thus hidden from the home view (`false`).
+* `is_muted` (boolean): whether the stream is
+  [muted](/help/mute-a-stream).  Prior to Zulip 2.1, this feature was
+  represented by the more confusingly named `in_home_view` (with the
+  opposite value, `in_home_view=!is_muted`); for
+  backwards-compatibility, modern Zulip still accepts that value.
 * `pin_to_top` (boolean): whether to pin the stream at the top of the stream list.
 * `desktop_notifications` (boolean): whether to show desktop notifications
     for all messages sent to the stream.
 * `audible_notifications` (boolean): whether to play a sound
   notification for all messages sent to the stream.
 * `push_notifications` (boolean): whether to trigger a mobile push
+    notification for all messages sent to the stream.
+* `email_notifications` (boolean): whether to trigger an email
     notification for all messages sent to the stream.
 
 ## Response

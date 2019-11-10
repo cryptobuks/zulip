@@ -23,12 +23,12 @@ from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.timestamp import timestamp_to_datetime, datetime_to_timestamp
 from zerver.models import Realm, UserProfile, get_realm, RealmAuditLog
 from corporate.lib.stripe import catch_stripe_errors, attach_discount_to_realm, \
-    get_seat_count, sign_string, unsign_string, \
+    get_latest_seat_count, sign_string, unsign_string, \
     BillingError, StripeCardError, stripe_get_customer, \
     MIN_INVOICED_LICENSES, \
     add_months, next_month, \
     compute_plan_parameters, update_or_create_stripe_customer, \
-    process_initial_upgrade, add_plan_renewal_to_license_ledger_if_needed, \
+    process_initial_upgrade, make_end_of_cycle_updates_if_needed, \
     update_license_ledger_if_needed, update_license_ledger_for_automanaged_plan, \
     invoice_plan, invoice_plans_as_needed, get_discount_for_realm
 from corporate.models import Customer, CustomerPlan, LicenseLedger
@@ -213,18 +213,19 @@ class Kandra(object):  # nocoverage: TODO
 
 class StripeTestCase(ZulipTestCase):
     def setUp(self, *mocks: Mock) -> None:
+        super().setUp()
         # This test suite is not robust to users being added in populate_db. The following
-        # hack ensures get_seat_count is fixed, even as populate_db changes.
+        # hack ensures get_latest_seat_count is fixed, even as populate_db changes.
         realm = get_realm('zulip')
-        seat_count = get_seat_count(realm)
+        seat_count = get_latest_seat_count(realm)
         assert(seat_count >= 6)
-        for user in UserProfile.objects.filter(realm=realm, is_active=True, is_bot=False, is_guest=False) \
-                                       .exclude(email__in=[
+        for user in UserProfile.objects.filter(realm=realm, is_active=True, is_bot=False) \
+                                       .exclude(role=UserProfile.ROLE_GUEST).exclude(email__in=[
                                            self.example_email('hamlet'),
                                            self.example_email('iago')])[:seat_count-6]:
             user.is_active = False
             user.save(update_fields=['is_active'])
-        self.assertEqual(get_seat_count(realm), 6)
+        self.assertEqual(get_latest_seat_count(realm), 6)
         self.seat_count = 6
         self.signed_seat_count, self.salt = sign_string(str(self.seat_count))
         # Choosing dates with corresponding timestamps below 1500000000 so that they are
@@ -343,8 +344,13 @@ class StripeTest(StripeTestCase):
         self.assertEqual(stripe_customer.description, "zulip (Zulip Dev)")
         self.assertEqual(stripe_customer.discount, None)
         self.assertEqual(stripe_customer.email, user.email)
-        self.assertEqual(dict(stripe_customer.metadata),
-                         {'realm_id': str(user.realm.id), 'realm_str': 'zulip'})
+        metadata_dict = dict(stripe_customer.metadata)
+        self.assertEqual(metadata_dict['realm_str'], 'zulip')
+        try:
+            int(metadata_dict['realm_id'])
+        except ValueError:  # nocoverage
+            raise AssertionError("realm_id is not a number")
+
         # Check Charges in Stripe
         stripe_charges = [charge for charge in stripe.Charge.list(customer=stripe_customer.id)]
         self.assertEqual(len(stripe_charges), 1)
@@ -538,7 +544,7 @@ class StripeTest(StripeTestCase):
         self.login(self.example_email("hamlet"))
         new_seat_count = 23
         # Change the seat count while the user is going through the upgrade flow
-        with patch('corporate.lib.stripe.get_seat_count', return_value=new_seat_count):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=new_seat_count):
             self.upgrade()
         stripe_customer_id = Customer.objects.first().stripe_customer_id
         # Check that the Charge used the old quantity, not new_seat_count
@@ -586,8 +592,8 @@ class StripeTest(StripeTestCase):
         self.assertEqual('/upgrade/', response.url)
 
         # Try again, with a valid card, after they added a few users
-        with patch('corporate.lib.stripe.get_seat_count', return_value=23):
-            with patch('corporate.views.get_seat_count', return_value=23):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=23):
+            with patch('corporate.views.get_latest_seat_count', return_value=23):
                 self.upgrade()
         customer = Customer.objects.get(realm=get_realm('zulip'))
         # It's impossible to create two Customers, but check that we didn't
@@ -717,36 +723,37 @@ class StripeTest(StripeTestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual('/upgrade/', response.url)
 
-    def test_get_seat_count(self) -> None:
+    def test_get_latest_seat_count(self) -> None:
         realm = get_realm("zulip")
-        initial_count = get_seat_count(realm)
+        initial_count = get_latest_seat_count(realm)
         user1 = UserProfile.objects.create(realm=realm, email='user1@zulip.com', pointer=-1)
         user2 = UserProfile.objects.create(realm=realm, email='user2@zulip.com', pointer=-1)
-        self.assertEqual(get_seat_count(realm), initial_count + 2)
+        self.assertEqual(get_latest_seat_count(realm), initial_count + 2)
 
         # Test that bots aren't counted
         user1.is_bot = True
         user1.save(update_fields=['is_bot'])
-        self.assertEqual(get_seat_count(realm), initial_count + 1)
+        self.assertEqual(get_latest_seat_count(realm), initial_count + 1)
 
         # Test that inactive users aren't counted
         do_deactivate_user(user2)
-        self.assertEqual(get_seat_count(realm), initial_count)
+        self.assertEqual(get_latest_seat_count(realm), initial_count)
 
         # Test guests
         # Adding a guest to a realm with a lot of members shouldn't change anything
-        UserProfile.objects.create(realm=realm, email='user3@zulip.com', pointer=-1, is_guest=True)
-        self.assertEqual(get_seat_count(realm), initial_count)
+        UserProfile.objects.create(realm=realm, email='user3@zulip.com', pointer=-1, role=UserProfile.ROLE_GUEST)
+        self.assertEqual(get_latest_seat_count(realm), initial_count)
         # Test 1 member and 5 guests
         realm = Realm.objects.create(string_id='second', name='second')
         UserProfile.objects.create(realm=realm, email='member@second.com', pointer=-1)
         for i in range(5):
             UserProfile.objects.create(realm=realm, email='guest{}@second.com'.format(i),
-                                       pointer=-1, is_guest=True)
-        self.assertEqual(get_seat_count(realm), 1)
+                                       pointer=-1, role=UserProfile.ROLE_GUEST)
+        self.assertEqual(get_latest_seat_count(realm), 1)
         # Test 1 member and 6 guests
-        UserProfile.objects.create(realm=realm, email='guest5@second.com', pointer=-1, is_guest=True)
-        self.assertEqual(get_seat_count(realm), 2)
+        UserProfile.objects.create(realm=realm, email='guest5@second.com', pointer=-1,
+                                   role=UserProfile.ROLE_GUEST)
+        self.assertEqual(get_latest_seat_count(realm), 2)
 
     def test_sign_string(self) -> None:
         string = "abc"
@@ -873,46 +880,109 @@ class StripeTest(StripeTestCase):
         self.assertEqual(2, RealmAuditLog.objects.filter(
             event_type=RealmAuditLog.STRIPE_CARD_CHANGED).count())
 
+    @patch("corporate.lib.stripe.billing_logger.info")
+    def test_downgrade(self, mock_: Mock) -> None:
+        user = self.example_user("hamlet")
+        self.login(user.email)
+        with patch("corporate.lib.stripe.timezone_now", return_value=self.now):
+            self.local_upgrade(self.seat_count, True, CustomerPlan.ANNUAL, 'token')
+        response = self.client_post("/json/billing/plan/change",
+                                    {'status': CustomerPlan.DOWNGRADE_AT_END_OF_CYCLE})
+        self.assert_json_success(response)
+
+        # Verify that we still write LicenseLedger rows during the remaining
+        # part of the cycle
+        with patch("corporate.lib.stripe.get_latest_seat_count", return_value=20):
+            update_license_ledger_if_needed(user.realm, self.now)
+        self.assertEqual(LicenseLedger.objects.order_by('-id').values_list(
+            'licenses', 'licenses_at_next_renewal').first(), (20, 20))
+
+        # Verify that we invoice them for the additional users
+        from stripe import Invoice
+        Invoice.create = lambda **args: None  # type: ignore # cleaner than mocking
+        Invoice.finalize_invoice = lambda *args: None  # type: ignore # cleaner than mocking
+        with patch("stripe.InvoiceItem.create") as mocked:
+            invoice_plans_as_needed(self.next_month)
+        mocked.assert_called_once()
+        mocked.reset_mock()
+
+        # Check that we downgrade properly if the cycle is over
+        with patch("corporate.lib.stripe.get_latest_seat_count", return_value=30):
+            update_license_ledger_if_needed(user.realm, self.next_year)
+        self.assertEqual(get_realm('zulip').plan_type, Realm.LIMITED)
+        self.assertEqual(CustomerPlan.objects.first().status, CustomerPlan.ENDED)
+        self.assertEqual(LicenseLedger.objects.order_by('-id').values_list(
+            'licenses', 'licenses_at_next_renewal').first(), (20, 20))
+
+        # Verify that we don't write LicenseLedger rows once we've downgraded
+        with patch("corporate.lib.stripe.get_latest_seat_count", return_value=40):
+            update_license_ledger_if_needed(user.realm, self.next_year)
+        self.assertEqual(LicenseLedger.objects.order_by('-id').values_list(
+            'licenses', 'licenses_at_next_renewal').first(), (20, 20))
+
+        # Verify that we call invoice_plan once more after cycle end but
+        # don't invoice them for users added after the cycle end
+        self.assertIsNotNone(CustomerPlan.objects.first().next_invoice_date)
+        with patch("stripe.InvoiceItem.create") as mocked:
+            invoice_plans_as_needed(self.next_year + timedelta(days=32))
+        mocked.assert_not_called()
+        mocked.reset_mock()
+        # Check that we updated next_invoice_date in invoice_plan
+        self.assertIsNone(CustomerPlan.objects.first().next_invoice_date)
+
+        # Check that we don't call invoice_plan after that final call
+        with patch("corporate.lib.stripe.get_latest_seat_count", return_value=50):
+            update_license_ledger_if_needed(user.realm, self.next_year + timedelta(days=80))
+        with patch("corporate.lib.stripe.invoice_plan") as mocked:
+            invoice_plans_as_needed(self.next_year + timedelta(days=400))
+        mocked.assert_not_called()
+
+    @patch("corporate.lib.stripe.billing_logger.info")
+    @patch("stripe.Invoice.create")
+    @patch("stripe.Invoice.finalize_invoice")
+    @patch("stripe.InvoiceItem.create")
+    def test_downgrade_during_invoicing(self, *mocks: Mock) -> None:
+        # The difference between this test and test_downgrade is that
+        # CustomerPlan.status is DOWNGRADE_AT_END_OF_CYCLE rather than ENDED
+        # when we call invoice_plans_as_needed
+        # This test is essentially checking that we call make_end_of_cycle_updates_if_needed
+        # during the invoicing process.
+        user = self.example_user("hamlet")
+        self.login(user.email)
+        with patch("corporate.lib.stripe.timezone_now", return_value=self.now):
+            self.local_upgrade(self.seat_count, True, CustomerPlan.ANNUAL, 'token')
+        self.client_post("/json/billing/plan/change",
+                         {'status': CustomerPlan.DOWNGRADE_AT_END_OF_CYCLE})
+
+        plan = CustomerPlan.objects.first()
+        self.assertIsNotNone(plan.next_invoice_date)
+        self.assertEqual(plan.status, CustomerPlan.DOWNGRADE_AT_END_OF_CYCLE)
+        invoice_plans_as_needed(self.next_year)
+        plan = CustomerPlan.objects.first()
+        self.assertIsNone(plan.next_invoice_date)
+        self.assertEqual(plan.status, CustomerPlan.ENDED)
+
 class RequiresBillingAccessTest(ZulipTestCase):
     def setUp(self) -> None:
+        super().setUp()
         hamlet = self.example_user("hamlet")
         hamlet.is_billing_admin = True
         hamlet.save(update_fields=["is_billing_admin"])
 
-    # mocked_function_name will typically be something imported from
-    # stripe.py. In theory we could have endpoints that need to mock
-    # multiple functions, but we'll cross that bridge when we get there.
-    def _test_endpoint(self, url: str, mocked_function_name: str,
-                       request_data: Optional[Dict[str, Any]]={}) -> None:
-        # Normal users do not have access
+    def verify_non_admins_blocked_from_endpoint(
+            self, url: str, request_data: Optional[Dict[str, Any]]={}) -> None:
         self.login(self.example_email('cordelia'))
         response = self.client_post(url, request_data)
         self.assert_json_error_contains(response, "Must be a billing administrator or an organization")
 
-        # Billing admins have access
-        self.login(self.example_email('hamlet'))
-        with patch("corporate.views.{}".format(mocked_function_name)) as mocked1:
-            response = self.client_post(url, request_data)
-        self.assert_json_success(response)
-        mocked1.assert_called()
-
-        # Realm admins have access, even if they are not billing admins
-        self.login(self.example_email('iago'))
-        with patch("corporate.views.{}".format(mocked_function_name)) as mocked2:
-            response = self.client_post(url, request_data)
-        self.assert_json_success(response)
-        mocked2.assert_called()
-
-    def test_json_endpoints(self) -> None:
+    def test_non_admins_blocked_from_json_endpoints(self) -> None:
         params = [
-            ("/json/billing/sources/change", "do_replace_payment_source",
-             {'stripe_token': ujson.dumps('token')}),
-            # TODO: second argument should be something like "process_downgrade"
-            ("/json/billing/downgrade", "process_downgrade", {}),
-        ]  # type: List[Tuple[str, str, Dict[str, Any]]]
+            ("/json/billing/sources/change", {'stripe_token': ujson.dumps('token')}),
+            ("/json/billing/plan/change", {'status': ujson.dumps(1)}),
+        ]  # type: List[Tuple[str, Dict[str, Any]]]
 
-        for (url, mocked_function_name, data) in params:
-            self._test_endpoint(url, mocked_function_name, data)
+        for (url, data) in params:
+            self.verify_non_admins_blocked_from_endpoint(url, data)
 
         # Make sure that we are testing all the JSON endpoints
         # Quite a hack, but probably fine for now
@@ -923,6 +993,23 @@ class RequiresBillingAccessTest(ZulipTestCase):
         json_endpoints.remove("json/billing/upgrade")
 
         self.assertEqual(len(json_endpoints), len(params))
+
+    def test_admins_and_billing_admins_can_access(self) -> None:
+        # Billing admins have access
+        self.login(self.example_email('hamlet'))
+        with patch("corporate.views.do_replace_payment_source") as mocked1:
+            response = self.client_post("/json/billing/sources/change",
+                                        {'stripe_token': ujson.dumps('token')})
+        self.assert_json_success(response)
+        mocked1.assert_called()
+
+        # Realm admins have access, even if they are not billing admins
+        self.login(self.example_email('iago'))
+        with patch("corporate.views.do_replace_payment_source") as mocked2:
+            response = self.client_post("/json/billing/sources/change",
+                                        {'stripe_token': ujson.dumps('token')})
+        self.assert_json_success(response)
+        mocked2.assert_called()
 
 class BillingHelpersTest(ZulipTestCase):
     def test_next_month(self) -> None:
@@ -1010,11 +1097,11 @@ class LicenseLedgerTest(StripeTestCase):
         self.assertEqual(LicenseLedger.objects.count(), 1)
         plan = CustomerPlan.objects.get()
         # Plan hasn't renewed yet
-        add_plan_renewal_to_license_ledger_if_needed(plan, self.next_year - timedelta(days=1))
+        make_end_of_cycle_updates_if_needed(plan, self.next_year - timedelta(days=1))
         self.assertEqual(LicenseLedger.objects.count(), 1)
         # Plan needs to renew
         # TODO: do_deactivate_user for a user, so that licenses_at_next_renewal != licenses
-        ledger_entry = add_plan_renewal_to_license_ledger_if_needed(plan, self.next_year)
+        ledger_entry = make_end_of_cycle_updates_if_needed(plan, self.next_year)
         self.assertEqual(LicenseLedger.objects.count(), 2)
         ledger_params = {
             'plan': plan, 'is_renewal': True, 'event_time': self.next_year,
@@ -1022,7 +1109,7 @@ class LicenseLedgerTest(StripeTestCase):
         for key, value in ledger_params.items():
             self.assertEqual(getattr(ledger_entry, key), value)
         # Plan needs to renew, but we already added the plan_renewal ledger entry
-        add_plan_renewal_to_license_ledger_if_needed(plan, self.next_year + timedelta(days=1))
+        make_end_of_cycle_updates_if_needed(plan, self.next_year + timedelta(days=1))
         self.assertEqual(LicenseLedger.objects.count(), 2)
 
     def test_update_license_ledger_if_needed(self) -> None:
@@ -1054,16 +1141,16 @@ class LicenseLedgerTest(StripeTestCase):
             self.local_upgrade(self.seat_count, True, CustomerPlan.ANNUAL, 'token')
         plan = CustomerPlan.objects.first()
         # Simple increase
-        with patch('corporate.lib.stripe.get_seat_count', return_value=23):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=23):
             update_license_ledger_for_automanaged_plan(realm, plan, self.now)
         # Decrease
-        with patch('corporate.lib.stripe.get_seat_count', return_value=20):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=20):
             update_license_ledger_for_automanaged_plan(realm, plan, self.now)
         # Increase, but not past high watermark
-        with patch('corporate.lib.stripe.get_seat_count', return_value=21):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=21):
             update_license_ledger_for_automanaged_plan(realm, plan, self.now)
         # Increase, but after renewal date, and below last year's high watermark
-        with patch('corporate.lib.stripe.get_seat_count', return_value=22):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=22):
             update_license_ledger_for_automanaged_plan(realm, plan, self.next_year + timedelta(seconds=1))
 
         ledger_entries = list(LicenseLedger.objects.values_list(
@@ -1108,19 +1195,19 @@ class InvoiceTest(StripeTestCase):
         with patch('corporate.lib.stripe.timezone_now', return_value=self.now):
             self.upgrade()
         # Increase
-        with patch('corporate.lib.stripe.get_seat_count', return_value=self.seat_count + 3):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=self.seat_count + 3):
             update_license_ledger_if_needed(get_realm('zulip'), self.now + timedelta(days=100))
         # Decrease
-        with patch('corporate.lib.stripe.get_seat_count', return_value=self.seat_count):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=self.seat_count):
             update_license_ledger_if_needed(get_realm('zulip'), self.now + timedelta(days=200))
         # Increase, but not past high watermark
-        with patch('corporate.lib.stripe.get_seat_count', return_value=self.seat_count + 1):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=self.seat_count + 1):
             update_license_ledger_if_needed(get_realm('zulip'), self.now + timedelta(days=300))
         # Increase, but after renewal date, and below last year's high watermark
-        with patch('corporate.lib.stripe.get_seat_count', return_value=self.seat_count + 2):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=self.seat_count + 2):
             update_license_ledger_if_needed(get_realm('zulip'), self.now + timedelta(days=400))
         # Increase, but after event_time
-        with patch('corporate.lib.stripe.get_seat_count', return_value=self.seat_count + 3):
+        with patch('corporate.lib.stripe.get_latest_seat_count', return_value=self.seat_count + 3):
             update_license_ledger_if_needed(get_realm('zulip'), self.now + timedelta(days=500))
         plan = CustomerPlan.objects.first()
         invoice_plan(plan, self.now + timedelta(days=400))

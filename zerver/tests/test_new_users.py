@@ -6,7 +6,7 @@ from django.test import override_settings
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.signals import get_device_browser, get_device_os, JUST_CREATED_THRESHOLD
 from zerver.lib.actions import notify_new_user, do_change_notification_settings
-from zerver.models import Recipient, Stream, Realm
+from zerver.models import Recipient, Stream, Realm, get_realm
 from zerver.lib.initial_password import initial_password
 from unittest import mock
 from zerver.lib.timezone import get_timezone
@@ -111,6 +111,7 @@ class SendLoginEmailTest(ZulipTestCase):
 class TestBrowserAndOsUserAgentStrings(ZulipTestCase):
 
     def setUp(self) -> None:
+        super().setUp()
         self.user_agents = [
             ('mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
                 'Chrome/54.0.2840.59 Safari/537.36', 'Chrome', 'Linux',),
@@ -172,7 +173,7 @@ class TestBrowserAndOsUserAgentStrings(ZulipTestCase):
 class TestNotifyNewUser(ZulipTestCase):
     def test_notify_of_new_user_internally(self) -> None:
         new_user = self.example_user('cordelia')
-        self.make_stream('signups')
+        self.make_stream('signups', get_realm(settings.SYSTEM_BOT_REALM))
         notify_new_user(new_user, internal=True)
 
         message = self.get_last_message()
@@ -193,4 +194,4 @@ class TestNotifyNewUser(ZulipTestCase):
         self.assertEqual(message.recipient.type, Recipient.STREAM)
         actual_stream = Stream.objects.get(id=message.recipient.type_id)
         self.assertEqual(actual_stream.name, Realm.INITIAL_PRIVATE_STREAM_NAME)
-        self.assertIn('@_**Cordelia Lear|%d** just signed up for Zulip.' % (new_user.id), message.content)
+        self.assertIn('@_**Cordelia Lear|%d** just signed up for Zulip.' % (new_user.id,), message.content)

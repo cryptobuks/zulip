@@ -1,7 +1,3 @@
-var copy_and_paste = (function () {
-
-var exports = {};
-
 function find_boundary_tr(initial_tr, iterate_row) {
     var j;
     var skip_same_td_check = false;
@@ -43,6 +39,21 @@ function construct_recipient_header(message_row) {
     return $('<p>').append($('<strong>').text(message_header_content));
 }
 
+/*
+The techniques we use in this code date back to
+2013 and may be obsolete today (and may not have
+been even the best workaround back then).
+
+https://github.com/zulip/zulip/commit/fc0b7c00f16316a554349f0ad58c6517ebdd7ac4
+
+The idea is that we build a temp div, let jQuery process the
+selection, then restore the selection on a zero-second timer back
+to the original selection.
+
+Do not be afraid to change this code if you understand
+how modern browsers deal with copy/paste.  Just test
+your changes carefully.
+*/
 function construct_copy_div(div, start_id, end_id) {
     var start_row = current_msg_list.get_row(start_id);
     var start_recipient_row = rows.get_message_recipient_row(start_row);
@@ -73,7 +84,37 @@ function construct_copy_div(div, start_id, end_id) {
     }
 }
 
-function copy_handler() {
+function select_div(div, selection) {
+    div.css({
+        position: 'absolute',
+        left: '-99999px',
+        // Color and background is made according to "day mode"
+        // exclusively here because when copying the content
+        // into, say, Gmail compose box, the styles come along.
+        // This is done to avoid copying the content with dark
+        // background when using the app in night mode.
+        // We can avoid other custom styles since they are wrapped
+        // inside another parent such as `.message_content`.
+        color: '#333',
+        background: '#FFF',
+    })
+        .attr('id', 'copytempdiv');
+    $('body').append(div);
+    selection.selectAllChildren(div[0]);
+}
+
+function remove_div(div, ranges, selection) {
+    window.setTimeout(function () {
+        selection = window.getSelection();
+        selection.removeAllRanges();
+        _.each(ranges, function (range) {
+            selection.addRange(range);
+        });
+        $('#copytempdiv').remove();
+    }, 0);
+}
+
+exports.copy_handler = function () {
     // This is the main handler for copying message content via
     // `ctrl+C` in Zulip (note that this is totally independent of the
     // "select region" copy behavior on Linux; that is handled
@@ -88,6 +129,52 @@ function copy_handler() {
     //
     // * Otherwise, we want to copy the bodies of all messages that
     //   were partially covered by the selection.
+
+    var selection = window.getSelection();
+    var analysis = exports.analyze_selection(selection);
+    var ranges = analysis.ranges;
+    var start_id = analysis.start_id;
+    var end_id = analysis.end_id;
+    var skip_same_td_check = analysis.skip_same_td_check;
+    var div = $('<div>');
+
+    if (start_id === undefined || end_id === undefined) {
+        // In this case either the starting message or the ending
+        // message is not defined, so this is definitely not a
+        // multi-message selection and we can let the browser handle
+        // the copy.
+        document.execCommand('copy');
+        return;
+    }
+
+    if (!skip_same_td_check && start_id === end_id) {
+        // Check whether the selection both starts and ends in the
+        // same message.  If so, Let the browser handle this.
+        document.execCommand('copy');
+        return;
+    }
+
+    // We've now decided to handle the copy event ourselves.
+    //
+    // We construct a temporary div for what we want the copy to pick up.
+    // We construct the div only once, rather than for each range as we can
+    // determine the starting and ending point with more confidence for the
+    // whole selection. When constructing for each `Range`, there is a high
+    // chance for overlaps between same message ids, avoiding which is much
+    // more difficult since we can get a range (start_id and end_id) for
+    // each selection `Range`.
+    construct_copy_div(div, start_id, end_id);
+
+    // Select div so that the browser will copy it
+    // instead of copying the original selection
+    select_div(div, selection);
+    document.execCommand('copy');
+    remove_div(div, ranges, selection);
+};
+
+exports.analyze_selection = function (selection) {
+    // Here we analyze our selection to determine if part of a message
+    // or multiple messages are selected.
     //
     // Firefox and Chrome handle selection of multiple messages
     // differently. Firefox typically creates multiple ranges for the
@@ -97,7 +184,6 @@ function copy_handler() {
     // analyze the combined range of the selections, and copy their
     // full content.
 
-    var selection = window.getSelection();
     var i;
     var range;
     var ranges = [];
@@ -112,7 +198,6 @@ function copy_handler() {
     // selection covers multiple messages (and thus we should no
     // longer consider letting the browser handle the copy event).
     var skip_same_td_check = false;
-    var div = $('<div>');
 
     for (i = 0; i < selection.rangeCount; i += 1) {
         range = selection.getRangeAt(i);
@@ -139,7 +224,7 @@ function copy_handler() {
         // the compose_close button when you go off the end of the
         // last message
         if (endc.attr('id') === "bottom_whitespace" || endc.attr('id') === "compose_close") {
-            initial_end_tr = $(".message_row:last");
+            initial_end_tr = $(".message_row").last();
             // The selection goes off the end of the message feed, so
             // this is a multi-message selection.
             skip_same_td_check = true;
@@ -165,76 +250,13 @@ function copy_handler() {
         }
     }
 
-    if (start_id === undefined || end_id === undefined) {
-        // In this case either the starting message or the ending
-        // message is not defined, so this is definitely not a
-        // multi-message selection and we can let the browser handle
-        // the copy.
-        return;
-    }
-
-    if (!skip_same_td_check && start_id === end_id) {
-        // Check whether the selection both starts and ends in the
-        // same message.  If so, Let the browser handle this.
-        return;
-    }
-
-    // We've now decided to handle the copy event ourselves.
-    //
-    // We construct a temporary div for what we want the copy to pick up.
-    // We construct the div only once, rather than for each range as we can
-    // determine the starting and ending point with more confidence for the
-    // whole selection. When constructing for each `Range`, there is a high
-    // chance for overlaps between same message ids, avoiding which is much
-    // more difficult since we can get a range (start_id and end_id) for
-    // each selection `Range`.
-    construct_copy_div(div, start_id, end_id);
-
-    // Select div so that the browser will copy it
-    // instead of copying the original selection
-    div.css({
-        position: 'absolute',
-        left: '-99999px',
-        // Color and background is made according to "day mode"
-        // exclusively here because when copying the content
-        // into, say, Gmail compose box, the styles come along.
-        // This is done to avoid copying the content with dark
-        // background when using the app in night mode.
-        // We can avoid other custom styles since they are wrapped
-        // inside another parent such as `.message_content`.
-        color: '#333',
-        background: '#FFF',
-    })
-        .attr('id', 'copytempdiv');
-    $('body').append(div);
-    selection.selectAllChildren(div[0]);
-
-    /*
-    The techniques we use in this code date back to
-    2013 and may be obsolete today (and may not have
-    been even the best workaround back then).
-
-    https://github.com/zulip/zulip/commit/fc0b7c00f16316a554349f0ad58c6517ebdd7ac4
-
-    The idea is that we build a temp div, return from
-    this function, let jQuery process the selection,
-    then restore the selection on a zero-second timer
-    back to the original selection.
-
-    Do not be afraid to change this code if you understand
-    how modern browsers deal with copy/paste.  Just test
-    your changes carefully.
-    */
-
-    window.setTimeout(function () {
-        selection = window.getSelection();
-        selection.removeAllRanges();
-        _.each(ranges, function (range) {
-            selection.addRange(range);
-        });
-        $('#copytempdiv').remove();
-    }, 0);
-}
+    return {
+        ranges: ranges,
+        start_id: start_id,
+        end_id: end_id,
+        skip_same_td_check: skip_same_td_check,
+    };
+};
 
 exports.paste_handler_converter = function (paste_html) {
     var converters = {
@@ -319,15 +341,8 @@ exports.paste_handler = function (event) {
 };
 
 exports.initialize = function () {
-    $(document).on('copy', copy_handler);
     $("#compose-textarea").bind('paste', exports.paste_handler);
     $('body').on('paste', '#message_edit_form', exports.paste_handler);
 };
 
-return exports;
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = copy_and_paste;
-}
-window.copy_and_paste = copy_and_paste;
+window.copy_and_paste = exports;

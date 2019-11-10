@@ -9,7 +9,8 @@ from django.db.models import Q
 from django.core.cache.backends.base import BaseCache
 from django.http import HttpRequest
 
-from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar, Tuple
+from typing import Any, Callable, Dict, Iterable, List, \
+    Optional, Sequence, TypeVar, Tuple, TYPE_CHECKING
 
 from zerver.lib.utils import statsd, statsd_key, make_safe_digest
 import time
@@ -19,7 +20,7 @@ import sys
 import os
 import hashlib
 
-if False:
+if TYPE_CHECKING:
     # These modules have to be imported for type annotations but
     # they cannot be imported at runtime due to cyclic dependency.
     from zerver.models import UserProfile, Realm, Message
@@ -215,9 +216,21 @@ def cache_delete_many(items: Iterable[str], cache_name: Optional[str]=None) -> N
         KEY_PREFIX + item for item in items)
     remote_cache_stats_finish()
 
-# Generic_bulk_cached fetch and its helpers
+# Generic_bulk_cached fetch and its helpers.  We start with declaring
+# a few type variables that help define its interface.
+
+# Type for the cache's keys; will typically be int or str.
 ObjKT = TypeVar('ObjKT')
+
+# Type for items to be fetched from the database (e.g. a Django model object)
 ItemT = TypeVar('ItemT')
+
+# Type for items to be stored in the cache (e.g. a dictionary serialization).
+# Will equal ItemT unless a cache_transformer is specified.
+CacheItemT = TypeVar('CacheItemT')
+
+# Type for compressed items for storage in the cache.  For
+# serializable objects, will be the object; if encoded, bytes.
 CompressedItemT = TypeVar('CompressedItemT')
 
 def default_extractor(obj: CompressedItemT) -> ItemT:
@@ -229,8 +242,8 @@ def default_setter(obj: ItemT) -> CompressedItemT:
 def default_id_fetcher(obj: ItemT) -> ObjKT:
     return obj.id  # type: ignore # Need ItemT/CompressedItemT typevars to be a Django protocol
 
-def default_cache_transformer(obj: ItemT) -> ItemT:
-    return obj
+def default_cache_transformer(obj: ItemT) -> CacheItemT:
+    return obj  # type: ignore # Need a type assert that ItemT=CacheItemT
 
 # Required Arguments are as follows:
 # * object_ids: The list of object ids to look up
@@ -248,24 +261,33 @@ def default_cache_transformer(obj: ItemT) -> ItemT:
 #   function of the objects, not the objects themselves)
 def generic_bulk_cached_fetch(
         cache_key_function: Callable[[ObjKT], str],
-        query_function: Callable[[List[ObjKT]], Iterable[Any]],
-        object_ids: Iterable[ObjKT],
-        extractor: Callable[[CompressedItemT], ItemT] = default_extractor,
-        setter: Callable[[ItemT], CompressedItemT] = default_setter,
+        query_function: Callable[[List[ObjKT]], Iterable[ItemT]],
+        object_ids: Sequence[ObjKT],
+        extractor: Callable[[CompressedItemT], CacheItemT] = default_extractor,
+        setter: Callable[[CacheItemT], CompressedItemT] = default_setter,
         id_fetcher: Callable[[ItemT], ObjKT] = default_id_fetcher,
-        cache_transformer: Callable[[ItemT], ItemT] = default_cache_transformer
-) -> Dict[ObjKT, ItemT]:
+        cache_transformer: Callable[[ItemT], CacheItemT] = default_cache_transformer,
+) -> Dict[ObjKT, CacheItemT]:
+    if len(object_ids) == 0:
+        # Nothing to fetch.
+        return {}
+
     cache_keys = {}  # type: Dict[ObjKT, str]
     for object_id in object_ids:
         cache_keys[object_id] = cache_key_function(object_id)
     cached_objects_compressed = cache_get_many([cache_keys[object_id]
                                                 for object_id in object_ids])  # type: Dict[str, Tuple[CompressedItemT]]
-    cached_objects = {}  # type: Dict[str, ItemT]
+    cached_objects = {}  # type: Dict[str, CacheItemT]
     for (key, val) in cached_objects_compressed.items():
         cached_objects[key] = extractor(cached_objects_compressed[key][0])
     needed_ids = [object_id for object_id in object_ids if
                   cache_keys[object_id] not in cached_objects]
-    db_objects = query_function(needed_ids)
+
+    # Only call query_function if there are some ids to fetch from the database:
+    if len(needed_ids) > 0:
+        db_objects = query_function(needed_ids)
+    else:
+        db_objects = []
 
     items_for_remote_cache = {}  # type: Dict[str, Tuple[CompressedItemT]]
     for obj in db_objects:
@@ -295,10 +317,15 @@ def cache(func: Callable[..., ReturnT]) -> Callable[..., ReturnT]:
     return cache_with_key(keyfunc)(func)
 
 def preview_url_cache_key(url: str) -> str:
-    return "preview_url:%s" % (make_safe_digest(url))
+    return "preview_url:%s" % (make_safe_digest(url),)
 
 def display_recipient_cache_key(recipient_id: int) -> str:
     return "display_recipient_dict:%d" % (recipient_id,)
+
+def display_recipient_bulk_get_users_by_id_cache_key(user_id: int) -> str:
+    # Cache key function for a function for bulk fetching users, used internally
+    # by display_recipient code.
+    return 'bulk_fetch_display_recipients:' + user_profile_by_id_cache_key(user_id)
 
 def user_profile_by_email_cache_key(email: str) -> str:
     # See the comment in zerver/lib/avatar_hash.py:gravatar_hash for why we
@@ -313,7 +340,7 @@ def user_profile_cache_key(email: str, realm: 'Realm') -> str:
     return user_profile_cache_key_id(email, realm.id)
 
 def bot_profile_cache_key(email: str) -> str:
-    return "bot_profile:%s" % (make_safe_digest(email.strip()))
+    return "bot_profile:%s" % (make_safe_digest(email.strip()),)
 
 def user_profile_by_id_cache_key(user_profile_id: int) -> str:
     return "user_profile_by_id:%s" % (user_profile_id,)
@@ -324,8 +351,9 @@ def user_profile_by_api_key_cache_key(api_key: str) -> str:
 realm_user_dict_fields = [
     'id', 'full_name', 'short_name', 'email',
     'avatar_source', 'avatar_version', 'is_active',
-    'is_realm_admin', 'is_bot', 'realm_id', 'timezone',
-    'date_joined', 'is_guest'
+    'role', 'is_bot', 'realm_id', 'timezone',
+    'date_joined', 'bot_owner_id', 'delivery_email',
+    'bot_type'
 ]  # type: List[str]
 
 def realm_user_dicts_cache_key(realm_id: int) -> str:
@@ -358,6 +386,7 @@ def get_stream_cache_key(stream_name: str, realm_id: int) -> str:
 def delete_user_profile_caches(user_profiles: Iterable['UserProfile']) -> None:
     # Imported here to avoid cyclic dependency.
     from zerver.lib.users import get_all_api_keys
+    from zerver.models import is_cross_realm_bot_email
     keys = []
     for user_profile in user_profiles:
         keys.append(user_profile_by_email_cache_key(user_profile.delivery_email))
@@ -365,6 +394,9 @@ def delete_user_profile_caches(user_profiles: Iterable['UserProfile']) -> None:
         for api_key in get_all_api_keys(user_profile):
             keys.append(user_profile_by_api_key_cache_key(api_key))
         keys.append(user_profile_cache_key(user_profile.email, user_profile.realm))
+        if user_profile.is_bot and is_cross_realm_bot_email(user_profile.email):
+            # Handle clearing system bots from their special cache.
+            keys.append(bot_profile_cache_key(user_profile.email))
 
     cache_delete_many(keys)
 
@@ -373,7 +405,20 @@ def delete_display_recipient_cache(user_profile: 'UserProfile') -> None:
     recipient_ids = Subscription.objects.filter(user_profile=user_profile)
     recipient_ids = recipient_ids.values_list('recipient_id', flat=True)
     keys = [display_recipient_cache_key(rid) for rid in recipient_ids]
+    keys.append(display_recipient_bulk_get_users_by_id_cache_key(user_profile.id))
     cache_delete_many(keys)
+
+def changed(kwargs: Any, fields: List[str]) -> bool:
+    if kwargs.get('update_fields') is None:
+        # adds/deletes should invalidate the cache
+        return True
+
+    update_fields = set(kwargs['update_fields'])
+    for f in fields:
+        if f in update_fields:
+            return True
+
+    return False
 
 # Called by models.py to flush the user_profile cache whenever we save
 # a user_profile object
@@ -381,41 +426,29 @@ def flush_user_profile(sender: Any, **kwargs: Any) -> None:
     user_profile = kwargs['instance']
     delete_user_profile_caches([user_profile])
 
-    def changed(fields: List[str]) -> bool:
-        if kwargs.get('update_fields') is None:
-            # adds/deletes should invalidate the cache
-            return True
-
-        update_fields = set(kwargs['update_fields'])
-        for f in fields:
-            if f in update_fields:
-                return True
-
-        return False
-
     # Invalidate our active_users_in_realm info dict if any user has changed
     # the fields in the dict or become (in)active
-    if changed(realm_user_dict_fields):
+    if changed(kwargs, realm_user_dict_fields):
         cache_delete(realm_user_dicts_cache_key(user_profile.realm_id))
 
-    if changed(['is_active']):
+    if changed(kwargs, ['is_active']):
         cache_delete(active_user_ids_cache_key(user_profile.realm_id))
         cache_delete(active_non_guest_user_ids_cache_key(user_profile.realm_id))
 
-    if changed(['is_guest']):
+    if changed(kwargs, ['role']):
         cache_delete(active_non_guest_user_ids_cache_key(user_profile.realm_id))
 
-    if changed(['email', 'full_name', 'short_name', 'id', 'is_mirror_dummy']):
+    if changed(kwargs, ['email', 'full_name', 'short_name', 'id', 'is_mirror_dummy']):
         delete_display_recipient_cache(user_profile)
 
     # Invalidate our bots_in_realm info dict if any bot has
     # changed the fields in the dict or become (in)active
-    if user_profile.is_bot and changed(bot_dict_fields):
+    if user_profile.is_bot and changed(kwargs, bot_dict_fields):
         cache_delete(bot_dicts_in_realm_cache_key(user_profile.realm))
 
     # Invalidate realm-wide alert words cache if any user in the realm has changed
     # alert words
-    if changed(['alert_words']):
+    if changed(kwargs, ['alert_words']):
         cache_delete(realm_alert_words_cache_key(user_profile.realm))
         cache_delete(realm_alert_words_automaton_cache_key(user_profile.realm))
 
@@ -436,6 +469,11 @@ def flush_realm(sender: Any, **kwargs: Any) -> None:
         cache_delete(realm_alert_words_automaton_cache_key(realm))
         cache_delete(active_non_guest_user_ids_cache_key(realm.id))
         cache_delete(realm_rendered_description_cache_key(realm))
+        cache_delete(realm_text_description_cache_key(realm))
+
+    if changed(kwargs, ['description']):
+        cache_delete(realm_rendered_description_cache_key(realm))
+        cache_delete(realm_text_description_cache_key(realm))
 
 def realm_alert_words_cache_key(realm: 'Realm') -> str:
     return "realm_alert_words:%s" % (realm.string_id,)
@@ -445,6 +483,9 @@ def realm_alert_words_automaton_cache_key(realm: 'Realm') -> str:
 
 def realm_rendered_description_cache_key(realm: 'Realm') -> str:
     return "realm_rendered_description:%s" % (realm.string_id,)
+
+def realm_text_description_cache_key(realm: 'Realm') -> str:
+    return "realm_text_description:%s" % (realm.string_id,)
 
 # Called by models.py to flush the stream cache whenever we save a stream
 # object.
@@ -474,7 +515,7 @@ def to_dict_cache_key(message: 'Message') -> str:
     return to_dict_cache_key_id(message.id)
 
 def open_graph_description_cache_key(content: Any, request: HttpRequest) -> str:
-    return 'open_graph_description_path:%s' % (make_safe_digest(request.META['PATH_INFO']))
+    return 'open_graph_description_path:%s' % (make_safe_digest(request.META['PATH_INFO']),)
 
 def flush_message(sender: Any, **kwargs: Any) -> None:
     message = kwargs['instance']
@@ -534,3 +575,33 @@ def ignore_unhashable_lru_cache(maxsize: int=128, typed: bool=False) -> DECORATO
         return wrapper
 
     return decorator
+
+def dict_to_items_tuple(user_function: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrapper that converts any dict args to dict item tuples."""
+    def dict_to_tuple(arg: Any) -> Any:
+        if isinstance(arg, dict):
+            return tuple(sorted(arg.items()))
+        return arg
+
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        new_args = (dict_to_tuple(arg) for arg in args)
+        return user_function(*new_args, **kwargs)
+
+    return wrapper
+
+def items_tuple_to_dict(user_function: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrapper that converts any dict items tuple args to dicts."""
+    def dict_items_to_dict(arg: Any) -> Any:
+        if isinstance(arg, tuple):
+            try:
+                return dict(arg)
+            except TypeError:
+                pass
+        return arg
+
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        new_args = (dict_items_to_dict(arg) for arg in args)
+        new_kwargs = {key: dict_items_to_dict(val) for key, val in kwargs.items()}
+        return user_function(*new_args, **new_kwargs)
+
+    return wrapper

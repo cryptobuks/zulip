@@ -1,5 +1,6 @@
 from inspect import signature
 from functools import partial
+import string
 from typing import Any, Dict, Optional, List, Callable
 
 from django.http import HttpRequest, HttpResponse
@@ -19,28 +20,45 @@ from zerver.webhooks.bitbucket2.view import BITBUCKET_TOPIC_TEMPLATE, \
     BITBUCKET_FORK_BODY, BITBUCKET_REPO_UPDATED_CHANGED
 
 BRANCH_UPDATED_MESSAGE_TEMPLATE = "{user_name} pushed to branch {branch_name}. Head is now {head}."
-PULL_REQUEST_MARKED_AS_NEEDS_WORK_TEMPLATE = """{user_name} marked [PR #{number}]({url}) \
-as \"needs work\""""
-PULL_REQUEST_MARKED_AS_NEEDS_WORK_TEMPLATE_WITH_TITLE = """{user_name} marked \
-[PR #{number} {title}]({url}) as \"needs work\""""
-PULL_REQUEST_REASSIGNED_TEMPLATE = """{user_name} reassigned [PR #{number}]({url}) \
-to {assignees}"""
-PULL_REQUEST_REASSIGNED_TEMPLATE_WITH_TITLE = """{user_name} reassigned [PR #{number} \
-{title}]({url}) to {assignees}"""
-PULL_REQUEST_REASSIGNED_TO_NONE_TEMPLATE = """{user_name} removed all reviewers from [PR \
-#{number}]({url})"""
-PULL_REQUEST_REASSIGNED_TO_NONE_TEMPLATE_WITH_TITLE = """{user_name} removed all reviewers \
-from [PR #{number} {title}]({url})"""
-PULL_REQUEST_OPENED_OR_MODIFIED_TEMPLATE_WITH_REVIEWERS = """{user_name} {action} [PR #{number}]\
-({url})\nfrom `{source}` to `{destination}` (assigned to {assignees} for review)"""
-PULL_REQUEST_OPENED_OR_MODIFIED_TEMPLATE_WITH_REVIEWERS_WITH_TITLE = """{user_name} {action} \
-[PR #{number} {title}]({url})\nfrom `{source}` to `{destination}` (assigned to {assignees} for \
-review)"""
+PULL_REQUEST_MARKED_AS_NEEDS_WORK_TEMPLATE = "{user_name} marked [PR #{number}]({url}) as \"needs work\"."
+PULL_REQUEST_MARKED_AS_NEEDS_WORK_TEMPLATE_WITH_TITLE = """
+{user_name} marked [PR #{number} {title}]({url}) as \"needs work\".
+""".strip()
+PULL_REQUEST_REASSIGNED_TEMPLATE = "{user_name} reassigned [PR #{number}]({url}) to {assignees}."
+PULL_REQUEST_REASSIGNED_TEMPLATE_WITH_TITLE = """
+{user_name} reassigned [PR #{number} {title}]({url}) to {assignees}.
+""".strip()
+PULL_REQUEST_REASSIGNED_TO_NONE_TEMPLATE = "{user_name} removed all reviewers from [PR #{number}]({url})."
+PULL_REQUEST_REASSIGNED_TO_NONE_TEMPLATE_WITH_TITLE = """
+{user_name} removed all reviewers from [PR #{number} {title}]({url})
+""".strip()
+PULL_REQUEST_OPENED_OR_MODIFIED_TEMPLATE_WITH_REVIEWERS = """
+{user_name} {action} [PR #{number}]({url}) from `{source}` to \
+`{destination}` (assigned to {assignees} for review)
+""".strip()
+PULL_REQUEST_OPENED_OR_MODIFIED_TEMPLATE_WITH_REVIEWERS_WITH_TITLE = """
+{user_name} {action} [PR #{number} {title}]({url}) from `{source}` to \
+`{destination}` (assigned to {assignees} for review)
+""".strip()
+
+def fixture_to_headers(fixture_name: str) -> Dict[str, str]:
+    if fixture_name == "diagnostics_ping":
+        return {"HTTP_X_EVENT_KEY": "diagnostics:ping"}
+    return dict()
 
 def get_user_name(payload: Dict[str, Any]) -> str:
     user_name = "[{name}]({url})".format(name=payload["actor"]["name"],
                                          url=payload["actor"]["links"]["self"][0]["href"])
     return user_name
+
+def ping_handler(payload: Dict[str, Any], include_title: Optional[str]=None
+                 ) -> List[Dict[str, str]]:
+    if include_title:
+        subject = include_title
+    else:
+        subject = "Bitbucket Server Ping"
+    body = "Congratulations! The Bitbucket Server webhook was configured successfully!"
+    return [{"subject": subject, "body": body}]
 
 def repo_comment_handler(payload: Dict[str, Any], action: str) -> List[Dict[str, str]]:
     repo_name = payload["repository"]["name"]
@@ -73,13 +91,16 @@ def repo_forked_handler(payload: Dict[str, Any]) -> List[Dict[str, str]]:
 
 def repo_modified_handler(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     subject_new = BITBUCKET_TOPIC_TEMPLATE.format(repository_name=payload["new"]["name"])
+    new_name = payload['new']['name']
     body = BITBUCKET_REPO_UPDATED_CHANGED.format(
         actor=get_user_name(payload),
         change="name",
         repo_name=payload["old"]["name"],
         old=payload["old"]["name"],
-        new=payload["new"]["name"]
+        new=new_name
     )  # As of writing this, the only change we'd be notified about is a name change.
+    punctuation = '.' if new_name[-1] not in string.punctuation else ''
+    body = "{}{}".format(body, punctuation)
     return [{"subject": subject_new, "body": body}]
 
 def repo_push_branch_data(payload: Dict[str, Any], change: Dict[str, Any]) -> Dict[str, str]:
@@ -195,6 +216,8 @@ def get_pr_opened_or_modified_body(payload: Dict[str, Any], action: str,
             )
         else:
             body = PULL_REQUEST_OPENED_OR_MODIFIED_TEMPLATE_WITH_REVIEWERS.format(**parameters)
+        punctuation = ':' if description else '.'
+        body = "{}{}".format(body, punctuation)
         if description:
             body += '\n' + CONTENT_MESSAGE_TEMPLATE.format(message=description)
         return body
@@ -235,12 +258,15 @@ def get_pr_reassigned_body(payload: Dict[str, Any], include_title: Optional[bool
                 number=pr["id"],
                 url=pr["links"]["self"][0]["href"]
             )
-        return PULL_REQUEST_REASSIGNED_TO_NONE_TEMPLATE_WITH_TITLE.format(
+        punctuation = '.' if pr['title'][-1] not in string.punctuation else ''
+        message = PULL_REQUEST_REASSIGNED_TO_NONE_TEMPLATE_WITH_TITLE.format(
             user_name=get_user_name(payload),
             number=pr["id"],
             url=pr["links"]["self"][0]["href"],
             title=pr["title"]
         )
+        message = "{}{}".format(message, punctuation)
+        return message
     if not include_title:
         return PULL_REQUEST_REASSIGNED_TEMPLATE.format(
             user_name=get_user_name(payload),
@@ -292,6 +318,7 @@ def pr_comment_handler(payload: Dict[str, Any], action: str,
     return [{"subject": subject, "body": body}]
 
 EVENT_HANDLER_MAP = {
+    "diagnostics:ping": ping_handler,
     "repo:comment:added": partial(repo_comment_handler, action="commented"),
     "repo:comment:edited": partial(repo_comment_handler, action="edited their comment"),
     "repo:comment:deleted": partial(repo_comment_handler, action="deleted their comment"),
@@ -326,7 +353,10 @@ def api_bitbucket3_webhook(request: HttpRequest, user_profile: UserProfile,
                            branches: Optional[str]=REQ(default=None),
                            user_specified_topic: Optional[str]=REQ("topic", default=None)
                            ) -> HttpResponse:
-    eventkey = payload["eventKey"]
+    try:
+        eventkey = payload["eventKey"]
+    except KeyError:
+        eventkey = request.META["HTTP_X_EVENT_KEY"]
     handler = get_event_handler(eventkey)
 
     if "branches" in signature(handler).parameters:

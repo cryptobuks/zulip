@@ -17,17 +17,15 @@ class zulip_ops::base {
     # For managing our current Debian packages
     'debian-goodies',
     # Needed for zulip-ec2-configure-network-interfaces
-    'dhcpcd5',
     'python3-six',
     'python-six',
-    # "python3-boto", # missing on trusty
+    'python3-boto',
     'python-boto', # needed for postgres_common too
     'python3-netifaces',
     'python-netifaces',
     # Popular editors
     'vim',
     'emacs-nox',
-    'puppet-el',
     # Prevent accidental reboots
     'molly-guard',
     # Useful tools in a production environment
@@ -87,17 +85,14 @@ class zulip_ops::base {
     ensure     => running,
   }
 
-  if $zulip::base::release_name == 'xenial' {
-    # Our custom sshd_config uses options that don't exist on trusty.
-    file { '/etc/ssh/sshd_config':
-      ensure  => file,
-      require => Package['openssh-server'],
-      source  => 'puppet:///modules/zulip_ops/sshd_config',
-      owner   => 'root',
-      group   => 'root',
-      mode    => '0644',
-      notify  => Service['ssh'],
-    }
+  file { '/etc/ssh/sshd_config':
+    ensure  => file,
+    require => Package['openssh-server'],
+    source  => 'puppet:///modules/zulip_ops/sshd_config',
+    owner   => 'root',
+    group   => 'root',
+    mode    => '0644',
+    notify  => Service['ssh'],
   }
 
   file { '/root/.emacs':
@@ -117,8 +112,13 @@ class zulip_ops::base {
     require => User['zulip'],
   }
 
-  if $zulip::base::release_name == 'xenial' {
-    # TODO: Change this condition to something more coherent.
+  $hosting_provider = zulipconf('machine', 'hosting_provider', 'ec2')
+  if $hosting_provider == 'ec2' {
+    # This conditional block is for for whether it's not
+    # chat.zulip.org, which uses a different hosting provider.
+    package { 'dhcpcd5':
+      ensure => 'installed',
+    }
     file { '/root/.ssh/authorized_keys':
       ensure => file,
       mode   => '0600',
@@ -144,9 +144,7 @@ class zulip_ops::base {
     }
   }
 
-  if $zulip::base::release_name == 'xenial' {
-    # This is a proxy for the fact that our xenial machines are the
-    # ones in EC2.
+  if $hosting_provider == 'ec2' {
     file { '/usr/local/sbin/zulip-ec2-configure-interfaces':
       ensure => file,
       mode   => '0755',
@@ -191,31 +189,29 @@ class zulip_ops::base {
     force   => true,
     recurse => true,
   }
-  if $zulip::base::release_name == 'xenial' {
-    # Trusty's puppet doesn't support the include? rule used in rules.v4.
-    file { '/etc/iptables/rules.v4':
-      ensure  => file,
-      mode    => '0600',
-      content => template('zulip_ops/iptables/rules.v4.erb'),
-      require => Package['iptables-persistent'],
-    }
-    service { 'netfilter-persistent':
-      ensure     => running,
 
-      # Because there is no running process for this service, the normal status
-      # checks fail.  Because puppet then thinks the service has been manually
-      # stopped, it won't restart it.  This fake status command will trick puppet
-      # into thinking the service is *always* running (which in a way it is, as
-      # iptables is part of the kernel.)
-      hasstatus  => true,
-      status     => '/bin/true',
+  file { '/etc/iptables/rules.v4':
+    ensure  => file,
+    mode    => '0600',
+    content => template('zulip_ops/iptables/rules.v4.erb'),
+    require => Package['iptables-persistent'],
+  }
+  service { 'netfilter-persistent':
+    ensure     => running,
 
-      # Under Debian, the "restart" parameter does not reload the rules, so tell
-      # Puppet to fall back to stop/start, which does work.
-      hasrestart => false,
+    # Because there is no running process for this service, the normal status
+    # checks fail.  Because puppet then thinks the service has been manually
+    # stopped, it won't restart it.  This fake status command will trick puppet
+    # into thinking the service is *always* running (which in a way it is, as
+    # iptables is part of the kernel.)
+    hasstatus  => true,
+    status     => '/bin/true',
 
-      require    => Package['iptables-persistent'],
-      subscribe  => File['/etc/iptables/rules.v4'],
-    }
+    # Under Debian, the "restart" parameter does not reload the rules, so tell
+    # Puppet to fall back to stop/start, which does work.
+    hasrestart => false,
+
+    require    => Package['iptables-persistent'],
+    subscribe  => File['/etc/iptables/rules.v4'],
   }
 }

@@ -48,24 +48,28 @@ priority.
   projects), to requiring an invitation to join, to having an email from a
   list of domains, to being a member of a specific organization in
   LDAP/Active Directory.
+- Zulip can limit the features that new users have access to until their
+  accounts are older than a [configurable waiting period][waiting_period].
 - Zulip also supports customizing whether non-admins can
   [create streams](/help/configure-who-can-create-streams),
+  [invite to streams](/help/configure-who-can-invite-to-streams),
   [add custom emoji](/help/only-allow-admins-to-add-emoji),
   [add integrations and bots](/help/restrict-bot-creation),
   [edit or delete messages](/help/configure-message-editing-and-deletion),
   and more.
 
+[waiting_period]: /help/restrict-permissions-of-new-members
 [ldap-name]: https://zulip.readthedocs.io/en/latest/production/authentication-methods.html#ldap-including-active-directory
 
 ## Authentication
 
-- Zulip supports integrated single sign-on with Google, GitHub, and Active
-  Directory/LDAP. SAML and Okta authentication are coming soon. With Zulip
-  on-premise, we can support any of the 100+ authentication tools supported
-  by
+- Zulip supports integrated single sign-on with Google, GitHub, SAML
+  (including Okta), AzureAD, and Active Directory/LDAP.  With Zulip
+  on-premise, we can support any of the 100+ authentication tools
+  supported by
   [python-social-auth](https://python-social-auth-docs.readthedocs.io/en/latest/backends/index.html#social-backends)
-  as well as
-  [any SSO service that has a plugin for Apache][apache-sso].
+  as well as [any SSO service that has a plugin for
+  Apache][apache-sso].
 - Zulip uses the zxcvbn password strength checker by default, and supports
   customizing users’ password strength requirements. See our documentation
   on
@@ -133,7 +137,7 @@ the industry:
   that the user who is making the request has access to that data.
 - Only a small handful of people have access to production servers or
   to sensitive customer data.
-- Our error handling systems are have been designed from the beginning to
+- Our error handling systems have been designed from the beginning to
   avoid including user message content in error reports, even in cases where
   this makes debugging quite difficult (e.g. bugs in the message rendering
   codebase).

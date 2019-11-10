@@ -1,7 +1,7 @@
 set_global('$', global.make_zjquery());
 set_global('blueslip', global.make_zblueslip());
 
-var filter_key_handlers;
+let filter_key_handlers;
 
 const _page_params = {
     realm_users: [],
@@ -19,8 +19,7 @@ const _document = {
 const _channel = {};
 
 const _ui = {
-    set_up_scrollbar: function () {},
-    update_scrollbar: function () {},
+    get_content_element: element => element,
 };
 
 const _keydown_util = {
@@ -40,7 +39,7 @@ const _pm_list = {
 };
 
 const _popovers = {
-    hide_all_except_userlist_sidebar: function () {},
+    hide_all_except_sidebars: function () {},
     hide_all: function () {},
     show_userlist_sidebar: function () {
         $('.column-right').addClass('expanded');
@@ -80,7 +79,7 @@ set_global('stream_popover', _stream_popover);
 set_global('ui', _ui);
 
 zrequire('compose_fade');
-zrequire('Handlebars', 'handlebars');
+set_global('Handlebars', global.make_handlebars());
 zrequire('templates');
 zrequire('unread');
 zrequire('hash_util');
@@ -146,10 +145,6 @@ people.initialize_current_user(me.user_id);
 
 const real_update_huddles = activity.update_huddles;
 activity.update_huddles = () => {};
-
-global.compile_template('user_presence_row');
-global.compile_template('user_presence_rows');
-global.compile_template('group_pms');
 
 const presence_info = {};
 presence_info[alice.user_id] = { status: 'inactive' };
@@ -283,7 +278,7 @@ run_test('huddle_fraction_present', () => {
     let huddle = 'alice@zulip.com,fred@zulip.com,jill@zulip.com,mark@zulip.com';
     huddle = people.emails_strings_to_user_ids_string(huddle);
 
-    var presence_info = {};
+    let presence_info = {};
     presence_info[alice.user_id] = { status: 'active' }; // counts as present
     presence_info[fred.user_id] = { status: 'idle' }; // doest not count as present
     // jill not in list
@@ -324,7 +319,7 @@ function clear_buddy_list() {
 }
 
 function reset_setup() {
-    set_global('$', global.make_zjquery());
+    $.clear_all_elements();
     activity.set_cursor_and_filter();
 
     buddy_list.container = $('#user_presences');
@@ -340,7 +335,7 @@ run_test('presence_list_full_update', () => {
     compose_state.recipient = () => fred.email;
     compose_fade.set_focused_recipient("private");
 
-    var user_ids = activity.build_user_sidebar();
+    let user_ids = activity.build_user_sidebar();
 
     user_ids = _.map(user_ids, function (user_id) {
         return parseInt(user_id, 10);
@@ -388,7 +383,7 @@ run_test('PM_update_dom_counts', () => {
     buddy_list_add(pm_key, li);
     count.set_find_results('.value', value);
     li.set_find_results('.count', count);
-    count.set_parent(li);
+    count.set_parents_result('li', li);
 
     const counts = new Dict();
     counts.set(pm_key, 5);
@@ -483,7 +478,7 @@ run_test('handlers', () => {
 
     (function test_enter_key() {
         init();
-        var narrowed;
+        let narrowed;
 
         narrow.by = (method, email) => {
             assert.equal(email, 'alice@zulip.com');
@@ -505,7 +500,7 @@ run_test('handlers', () => {
         init();
         // We wire up the click handler in click_handlers.js,
         // so this just tests the called function.
-        var narrowed;
+        let narrowed;
 
         narrow.by = (method, email) => {
             assert.equal(email, 'alice@zulip.com');
@@ -561,12 +556,12 @@ run_test('filter_user_ids', () => {
     user_filter.val(''); // no search filter
 
     function get_user_ids() {
-        var filter_text = activity.get_filter_text();
-        var user_ids = buddy_data.get_filtered_and_sorted_user_ids(filter_text);
+        const filter_text = activity.get_filter_text();
+        const user_ids = buddy_data.get_filtered_and_sorted_user_ids(filter_text);
         return user_ids;
     }
 
-    var user_ids = buddy_data.get_filtered_and_sorted_user_ids();
+    let user_ids = buddy_data.get_filtered_and_sorted_user_ids();
     assert.deepEqual(user_ids, [
         alice.user_id,
         fred.user_id,
@@ -652,10 +647,10 @@ run_test('insert_fred_then_alice_then_rename', () => {
     assert(appended_html.indexOf('data-user-id="2"') > 0);
     assert(appended_html.indexOf('user_circle_green') > 0);
 
-    var fred_stub = $.create('fred-first');
+    const fred_stub = $.create('fred-first');
     buddy_list_add(fred.user_id, fred_stub);
 
-    var inserted_html;
+    let inserted_html;
     fred_stub.before = (html) => {
         inserted_html = html;
     };
@@ -672,7 +667,7 @@ run_test('insert_fred_then_alice_then_rename', () => {
     };
     people.add(fred_with_new_name);
 
-    var alice_stub = $.create('alice-first');
+    const alice_stub = $.create('alice-first');
     buddy_list_add(alice.user_id, alice_stub);
 
     alice_stub.before = (html) => {
@@ -700,7 +695,7 @@ run_test('insert_unfiltered_user_with_filter', () => {
 
 run_test('realm_presence_disabled', () => {
     page_params.realm_presence_disabled = true;
-    unread.suppress_unread_counts = false;
+    unread.set_suppress_unread_counts(false);
 
     activity.redraw_user();
     activity.build_user_sidebar();
@@ -799,7 +794,7 @@ run_test('update_presence_info', () => {
     const alice_li = $.create('alice stub');
     buddy_list_add(alice.user_id, alice_li);
 
-    var inserted;
+    let inserted;
     buddy_list.insert_or_move = () => {
         inserted = true;
     };
@@ -826,6 +821,15 @@ run_test('update_presence_info', () => {
 });
 
 run_test('initialize', () => {
+    function clear() {
+        $.clear_all_elements();
+        buddy_list.container = $('#user_presences');
+        buddy_list.container.append = () => {};
+        clear_buddy_list();
+    }
+
+    clear();
+
     $.stub_selector('html', {
         on: function (name, func) {
             func();
@@ -841,18 +845,21 @@ run_test('initialize', () => {
         check_for_unsuspend: function () {},
     };
 
-    var scroll_handler_started;
+    let scroll_handler_started;
     buddy_list.start_scroll_handler = () => {
         scroll_handler_started = true;
     };
 
-    activity.has_focus = false;
+    activity.client_is_active = false;
+
     activity.initialize();
+    clear();
+
     assert(scroll_handler_started);
     assert(!activity.new_user_input);
     assert(!$('#zephyr-mirror-error').hasClass('show'));
     assert.equal(page_params.presences, undefined);
-    assert(activity.has_focus);
+    assert(activity.client_is_active);
     $(window).idle = function (params) {
         params.onIdle();
     };
@@ -864,9 +871,12 @@ run_test('initialize', () => {
     global.setInterval = (func) => func();
 
     activity.initialize();
+
     assert($('#zephyr-mirror-error').hasClass('show'));
     assert(!activity.new_user_input);
-    assert(!activity.has_focus);
+    assert(!activity.client_is_active);
+
+    clear();
 
     // Now execute the reload-in-progress code path
     _reload_state.is_in_progress = function () {
@@ -874,6 +884,7 @@ run_test('initialize', () => {
     };
 
     activity.initialize();
+    clear();
 });
 
 run_test('away_status', () => {
@@ -882,4 +893,27 @@ run_test('away_status', () => {
     assert(user_status.is_away(alice.user_id));
     activity.on_revoke_away(alice.user_id);
     assert(!user_status.is_away(alice.user_id));
+});
+
+run_test('electron_bridge', () => {
+    activity.client_is_active = false;
+    window.electron_bridge = undefined;
+    assert.equal(activity.compute_active_status(), activity.IDLE);
+
+    activity.client_is_active = true;
+    assert.equal(activity.compute_active_status(), activity.ACTIVE);
+
+    window.electron_bridge = {
+        idle_on_system: true,
+    };
+    assert.equal(activity.compute_active_status(), activity.IDLE);
+    activity.client_is_active = false;
+    assert.equal(activity.compute_active_status(), activity.IDLE);
+
+    window.electron_bridge = {
+        idle_on_system: false,
+    };
+    assert.equal(activity.compute_active_status(), activity.ACTIVE);
+    activity.client_is_active = true;
+    assert.equal(activity.compute_active_status(), activity.ACTIVE);
 });

@@ -40,8 +40,30 @@ When writing your own incoming webhook integration, you'll want to write a test 
 for each distinct message condition your integration supports. You'll also need a
 corresponding fixture for each of these tests. Depending on the type of data
 the 3rd party service sends, your fixture may contain JSON, URL encoded text, or
-some other kind of data. See [Step 4: Create tests](#step-4-create-tests) or
+some other kind of data. See [Step 5: Create automated tests](#step-5-create-automated-tests) or
 [Testing](https://zulip.readthedocs.io/en/latest/testing/testing.html) for further details.
+
+### HTTP Headers
+
+Some third-party webhook APIs, such as GitHub's, don't encode all the
+information about an event in the JSON request body.  Instead, they
+put key details like the event type in a separate HTTP header
+(generally this is clear in their API documentation).  In order to
+test Zulip's handling of that integration, you will need to record
+which HTTP headers are used with each fixture you capture.
+
+Since this is integration-dependent, Zulip offers a simple API for
+doing this, which is probably best explained by looking at the example
+for GitHub: `zerver/webhooks/github/view.py`; basically, as part of
+writing your integration, you'll write a special function in your
+view.py file that maps the filename of the fixture to the set of HTTP
+headers to use. This function must be named "fixture_to_headers". Most
+integrations will use the same strategy as the GitHub integration:
+encoding the third party variable header data (usually just an event
+type) in the fixture filename, in such a case, you won't need to
+explicitly write the logic for such a special function again,
+instead you can just use the same helper method that the GitHub
+integration uses.
 
 ## Step 1: Initialize your webhook python package
 
@@ -127,7 +149,7 @@ from the body of the http request, `stream` with a default of `test`
 (available by default in the Zulip development environment), and
 `topic` with a default of `Hello World`. If your webhook uses a custom stream,
 it must exist before a message can be created in it. (See
-[Step 4: Create tests](#step-4-create-tests) for how to handle this in tests.)
+[Step 4: Create automated tests](#step-5-create-automated-tests) for how to handle this in tests.)
 
 The line that begins `# type` is a mypy type annotation. See [this
 page](https://zulip.readthedocs.io/en/latest/testing/mypy.html) for details about
@@ -179,43 +201,69 @@ icon. The second positional argument defines a list of categories for the
 integration.
 
 At this point, if you're following along and/or writing your own Hello World
-webhook, you have written enough code to test your integration.
+webhook, you have written enough code to test your integration. There are three
+tools which you can use to test your webhook - 2 command line tools and a GUI.
 
-First, get an API key from the Your bots section of your Zulip user's Settings
-page. If you haven't created a bot already, you can do that there. Then copy
-its API key and replace the placeholder `<api_key>` in the examples with
-your real key. This is how Zulip knows the request is from an authorized user.
+### Webhooks requiring custom configuration
 
-Now you can test using Zulip itself, or curl on the command line.
+In rare cases, it's necessary for an incoming webhook to require
+additional user configuration beyond what is specified in the post
+URL.  The typical use case for this is APIs like the Stripe API that
+require clients to do a callback to get details beyond an opaque
+object ID that one would want to include in a Zulip notification.
 
-Using `manage.py` from within the Zulip development environment:
-
-```
-(zulip-py3-venv)vagrant@vagrant-ubuntu-trusty-64:/srv/zulip$
-./manage.py send_webhook_fixture_message \
-    --fixture=zerver/webhooks/helloworld/fixtures/hello.json \
-    '--url=http://localhost:9991/api/v1/external/helloworld?api_key=<api_key>'
-```
-After which you should see something similar to:
+These configuration options are declared as follows:
 
 ```
-2016-07-07 15:06:59,187 INFO     127.0.0.1       POST    200 143ms (mem: 6ms/13) (md: 43ms/1) (db: 20ms/9q) (+start: 147ms) /api/v1/external/helloworld (helloworld-bot@zulip.com via ZulipHelloWorldWebhook)
+    WebhookIntegration('helloworld', ['misc'], display_name='Hello World',
+                       config_options=[('HelloWorld API Key', 'hw_api_key', check_string)])
 ```
+
+`config_options` is a list describing the parameters the user should
+configure:
+    1. A user-facing string describing the field to display to users.
+    2. The field name you'll use to access this from your `view.py` function.
+    3. A Validator, used to verify the input is valid.
+
+Common validators are available in `zerver/lib/validators.py`.
+
+## Step 4: Manually testing the webhook
+
+For either one of the command line tools, first, you'll need to get an API key
+from the **Your bots** section of your Zulip user's Settings page. To test the webhook,
+you'll need to [create a bot](https://zulipchat.com/help/add-a-bot-or-integration) with
+the **Incoming Webhook** type. Replace `<api_key>` with your bot's API key in the examples
+presented below! This is how Zulip knows that the request was made by an authorized user.
+
+### Curl
 
 Using curl:
-
 ```
 curl -X POST -H "Content-Type: application/json" -d '{ "featured_title":"Marilyn Monroe", "featured_url":"https://en.wikipedia.org/wiki/Marilyn_Monroe" }' http://localhost:9991/api/v1/external/helloworld\?api_key\=<api_key>
 ```
 
-After which you should see:
+After running the above command, you should see something similar to:
+
 ```
 {"msg":"","result":"success"}
 ```
 
-Using either method will create a message in Zulip:
+### Management Command: send_webhook_fixture_message
 
-<img class="screenshot" src="/static/images/api/helloworld-webhook.png" />
+Using `manage.py` from within the Zulip development environment:
+
+```
+(zulip-py3-venv) vagrant@ubuntu-bionic:/srv/zulip$
+./manage.py send_webhook_fixture_message \
+    --fixture=zerver/webhooks/helloworld/fixtures/hello.json \
+    '--url=http://localhost:9991/api/v1/external/helloworld?api_key=<api_key>'
+```
+
+After running the above command, you should see something similar to:
+
+```
+2016-07-07 15:06:59,187 INFO     127.0.0.1       POST    200 143ms (mem: 6ms/13) (md: 43ms/1) (db: 20ms/9q) (+start: 147ms) /api/v1/external/helloworld (helloworld-bot@zulip.com via ZulipHelloWorldWebhook)
+```
 
 Some webhooks require custom HTTP headers, which can be passed using
 `./manage.py send_webhook_fixture_message --custom-headers`.  For
@@ -227,7 +275,32 @@ The format is a JSON dictionary, so make sure that the header names do
 not contain any spaces in them and that you use the precise quoting
 approach shown above.
 
-## Step 4: Create tests
+### Integrations Dev Panel
+This is the GUI tool.
+
+1. Run `./tools/run-dev.py` then go to http://localhost:9991/devtools/integrations/.
+
+2. Set the following mandatory fields:  
+**Bot** - Any incoming webhook bot.  
+**Integration** - One of the integrations.  
+**Fixture** - Though not mandatory, it's recommended that you select one and then tweak it if necessary.
+The remaining fields are optional, and the URL will automatically be generated.
+
+3. Click **Send**!
+
+By opening Zulip in one tab and then this tool in another, you can quickly tweak
+your code and send sample messages for many different test fixtures.
+
+Note: Custom HTTP Headers must be entered as a JSON dictionary, if you want to use any in the first place that is.
+Feel free to use 4-spaces as tabs for indentation if you'd like!
+
+Your sample notification may look like:
+
+<img class="screenshot" src="/static/images/api/helloworld-webhook.png" alt="screenshot" />
+
+
+
+## Step 5: Create automated tests
 
 Every webhook integration should have a corresponding test file:
 `zerver/webhooks/mywebhook/tests.py`.
@@ -313,7 +386,7 @@ Once you have written some tests, you can run just these new tests from within
 the Zulip development environment with this command:
 
 ```
-(zulip-py3-venv)vagrant@vagrant-ubuntu-trusty-64:/srv/zulip$
+(zulip-py3-venv) vagrant@ubuntu-bionic:/srv/zulip$
 ./tools/test-backend zerver/webhooks/helloworld
 ```
 
@@ -329,7 +402,7 @@ Running zerver.webhooks.helloworld.tests.HelloWorldHookTests.test_hello_message
 DONE!
 ```
 
-## Step 5: Create documentation
+## Step 6: Create documentation
 
 Next, we add end-user documentation for our integration.  You
 can see the existing examples at <https://zulipchat.com/integrations>
@@ -362,7 +435,7 @@ stream name:
 To trigger a notification using this webhook, use
 `send_webhook_fixture_message` from the Zulip command line:
 
-    (zulip-py3-venv)vagrant@vagrant-ubuntu-trusty-64:/srv/zulip$
+    (zulip-py3-venv) vagrant@ubuntu-bionic:/srv/zulip$
     ./manage.py send_webhook_fixture_message \
         --fixture=zerver/tests/fixtures/helloworld/hello.json \
         '--url=http://localhost:9991/api/v1/external/helloworld?api_key=&lt;api_key&gt;'
@@ -387,9 +460,9 @@ for further details, including how to easily create the message
 screenshot. Mostly you should plan on templating off an existing guide, like
 [this one](https://raw.githubusercontent.com/zulip/zulip/master/zerver/webhooks/github/doc.md).
 
-[integration-docs-guide]: https://zulip.readthedocs.io/en/latest/subsystems/integration-docs.html
+[integration-docs-guide]: https://zulip.readthedocs.io/en/latest/documentation/integrations.html
 
-## Step 5: Preparing a pull request to zulip/zulip
+## Step 7: Preparing a pull request to zulip/zulip
 
 When you have finished your webhook integration and are ready for it to be
 available in the Zulip product, follow these steps to prepare your pull

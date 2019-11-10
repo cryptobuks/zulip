@@ -8,6 +8,8 @@ class zulip::app_frontend_base {
   $web_packages = [
     # Needed to access our database
     "postgresql-client-${zulip::base::postgres_version}",
+    # Needed for Slack import
+    'unzip',
   ]
   zulip::safepackage { $web_packages: ensure => 'installed' }
 
@@ -89,6 +91,7 @@ class zulip::app_frontend_base {
     notify  => Service[$zulip::common::supervisor_service],
   }
 
+  $uwsgi_listen_backlog_limit = zulipconf('application_server', 'uwsgi_listen_backlog_limit', 128)
   $uwsgi_buffer_size = zulipconf('application_server', 'uwsgi_buffer_size', 8192)
   $uwsgi_processes = zulipconf('application_server', 'uwsgi_processes', $uwsgi_default_processes)
   file { '/etc/zulip/uwsgi.ini':

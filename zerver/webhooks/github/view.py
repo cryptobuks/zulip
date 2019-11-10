@@ -16,6 +16,10 @@ from zerver.lib.webhooks.git import CONTENT_MESSAGE_TEMPLATE, \
     get_pull_request_event_message, get_push_commits_event_message, \
     get_push_tag_event_message, get_setup_webhook_message
 from zerver.models import UserProfile
+from zerver.lib.webhooks.common import \
+    get_http_headers_from_filename
+
+fixture_to_headers = get_http_headers_from_filename("HTTP_X_GITHUB_EVENT")
 
 class UnknownEventType(Exception):
     pass
@@ -57,7 +61,7 @@ def get_assigned_or_unassigned_pull_request_body(payload: Dict[str, Any],
         title=pull_request['title'] if include_title else None
     )
     if assignee is not None:
-        return "{} to {}".format(base_message, assignee)
+        return "{} to {}.".format(base_message[:-1], assignee)
     return base_message
 
 def get_closed_pull_request_body(payload: Dict[str, Any],
@@ -77,7 +81,7 @@ def get_membership_body(payload: Dict[str, Any]) -> str:
     member = payload['member']
     team_name = payload['team']['name']
 
-    return u"{sender} {action} [{username}]({html_url}) {preposition} the {team_name} team".format(
+    return u"{sender} {action} [{username}]({html_url}) {preposition} the {team_name} team.".format(
         sender=get_sender_name(payload),
         action=action,
         username=member['login'],
@@ -87,7 +91,7 @@ def get_membership_body(payload: Dict[str, Any]) -> str:
     )
 
 def get_member_body(payload: Dict[str, Any]) -> str:
-    return u"{} {} [{}]({}) to [{}]({})".format(
+    return u"{} {} [{}]({}) to [{}]({}).".format(
         get_sender_name(payload),
         payload['action'],
         payload['member']['login'],
@@ -134,25 +138,25 @@ def get_issue_comment_body(payload: Dict[str, Any],
 
 def get_fork_body(payload: Dict[str, Any]) -> str:
     forkee = payload['forkee']
-    return u"{} forked [{}]({})".format(
+    return u"{} forked [{}]({}).".format(
         get_sender_name(payload),
         forkee['name'],
         forkee['html_url']
     )
 
 def get_deployment_body(payload: Dict[str, Any]) -> str:
-    return u'{} created new deployment'.format(
+    return u'{} created new deployment.'.format(
         get_sender_name(payload),
     )
 
 def get_change_deployment_status_body(payload: Dict[str, Any]) -> str:
-    return u'Deployment changed status to {}'.format(
+    return u'Deployment changed status to {}.'.format(
         payload['deployment_status']['state'],
     )
 
 def get_create_or_delete_body(payload: Dict[str, Any], action: str) -> str:
     ref_type = payload['ref_type']
-    return u'{} {} {} {}'.format(
+    return u'{} {} {} {}.'.format(
         get_sender_name(payload),
         action,
         ref_type,
@@ -196,7 +200,7 @@ def get_push_commits_body(payload: Dict[str, Any]) -> str:
     )
 
 def get_public_body(payload: Dict[str, Any]) -> str:
-    return u"{} made [the repository]({}) public".format(
+    return u"{} made [the repository]({}) public.".format(
         get_sender_name(payload),
         payload['repository']['html_url'],
     )
@@ -213,27 +217,29 @@ def get_wiki_pages_body(payload: Dict[str, Any]) -> str:
     return u"{}:\n{}".format(get_sender_name(payload), wiki_info.rstrip())
 
 def get_watch_body(payload: Dict[str, Any]) -> str:
-    return u"{} starred [the repository]({})".format(
+    return u"{} starred [the repository]({}).".format(
         get_sender_name(payload),
         payload['repository']['html_url']
     )
 
 def get_repository_body(payload: Dict[str, Any]) -> str:
-    return u"{} {} [the repository]({})".format(
+    return u"{} {} [the repository]({}).".format(
         get_sender_name(payload),
         payload.get('action'),
         payload['repository']['html_url']
     )
 
 def get_add_team_body(payload: Dict[str, Any]) -> str:
-    return u"[The repository]({}) was added to team {}".format(
+    return u"[The repository]({}) was added to team {}.".format(
         payload['repository']['html_url'],
         payload['team']['name']
     )
 
 def get_release_body(payload: Dict[str, Any]) -> str:
-    return u"{} published [the release]({})".format(
+    return u"{} {} [release for tag {}]({}).".format(
         get_sender_name(payload),
+        payload['action'],
+        payload['release']['tag_name'],
         payload['release']['html_url'],
     )
 
@@ -252,7 +258,7 @@ def get_page_build_body(payload: Dict[str, Any]) -> str:
         CONTENT_MESSAGE_TEMPLATE.format(message=build['error']['message'])
     )
 
-    return u"Github Pages build, trigerred by {}, {}".format(
+    return u"Github Pages build, trigerred by {}, {}.".format(
         payload['build']['pusher']['login'],
         action
     )
@@ -265,7 +271,7 @@ def get_status_body(payload: Dict[str, Any]) -> str:
         )
     else:
         status = payload['state']
-    return u"[{}]({}) changed its status to {}".format(
+    return u"[{}]({}) changed its status to {}.".format(
         payload['sha'][:7],  # TODO
         payload['commit']['html_url'],
         status
@@ -352,6 +358,13 @@ Check [{name}]({html_url}) {status} ({conclusion}). ([{short_hash}]({commit_url}
     }
 
     return template.format(**kwargs)
+
+def get_star_body(payload: Dict[str, Any]) -> str:
+    template = "{user} {action} the repository."
+    return template.format(
+        user=payload['sender']['login'],
+        action='starred' if payload['action'] == 'created' else 'unstarred'
+    )
 
 def get_ping_body(payload: Dict[str, Any]) -> str:
     return get_setup_webhook_message('GitHub', get_sender_name(payload))
@@ -441,6 +454,7 @@ EVENT_FUNCTION_MAPPER = {
     'push_tags': get_push_tags_body,
     'release': get_release_body,
     'repository': get_repository_body,
+    'star': get_star_body,
     'status': get_status_body,
     'watch': get_watch_body,
 }
@@ -451,6 +465,7 @@ IGNORED_EVENTS = [
     'check_suite',
     'organization',
     'milestone',
+    'meta',
 ]
 
 @api_key_only_webhook_view('GitHub', notify_bot_owner_on_invalid_json=True)
@@ -489,7 +504,7 @@ def get_event(request: HttpRequest, payload: Dict[str, Any], branches: str) -> O
         # Unsupported pull_request events
         if action in ('labeled', 'unlabeled', 'review_request_removed'):
             return None
-    if event == 'push':
+    elif event == 'push':
         if is_commit_push_event(payload):
             if branches is not None:
                 branch = get_branch_name_from_ref(payload['ref'])

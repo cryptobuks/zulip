@@ -1,11 +1,11 @@
 {% extends "zerver/portico.html" %}
+{% set entrypoint = "landing-page" %}
 
 {% block customhead %}
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style media="screen">
     .app.portico-page { padding-bottom: 0px; }
 </style>
-{{ render_bundle('landing-page') }}
 {% endblock %}
 
 {% block portico_content %}
@@ -23,16 +23,14 @@
                         <h1>Zulip for <span class="platform"></span></h1>
                         <p class="description"></p>
                         <p class="download-instructions">For download instructions, go to the <a class="silver bold" href="/help/desktop-app-install-guide" target="_blank">desktop app install guide</a>.</p>
-                        <a class="link no-action" href="">
-                            <button type="button" name="button" class="green">Download Zulip for <span class="platform"></span></button>
-                        </a>
+                        <a class="link no-action" href=""><span class="button green">Download Zulip for <span class="platform"></span></span></a>
                         <span id="download-android-apk"><a href="https://github.com/zulip/zulip-mobile/releases/latest">or manually download APK</a></span>
                     </div>
                 </div>
             </div>
             <div class="image">
                 <div class="flex">
-                    <img src="" />
+                    <img src="/static/images/loader.svg" alt="" />
                 </div>
             </div>
         </div>

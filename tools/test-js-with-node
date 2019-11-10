@@ -23,6 +23,8 @@ USAGE = '''
     '''
 
 enforce_fully_covered = {
+    'static/shared/js/typing_status.js',
+
     'static/js/activity.js',
     'static/js/alert_words.js',
     'static/js/alert_words_ui.js',
@@ -41,6 +43,7 @@ enforce_fully_covered = {
     # 'static/js/composebox_typeahead.js',
     'static/js/dict.ts',
     'static/js/emoji.js',
+    'static/js/feature_flags.js',
     'static/js/fenced_code.js',
     'static/js/fetch_status.js',
     'static/js/filter.js',
@@ -78,7 +81,6 @@ enforce_fully_covered = {
     'static/js/transmit.js',
     'static/js/typeahead_helper.js',
     'static/js/typing_data.js',
-    'static/js/typing_status.js',
     'static/js/unread.js',
     'static/js/user_events.js',
     'static/js/user_groups.js',
@@ -102,16 +104,10 @@ parser.add_argument('--force', dest='force',
 parser.add_argument('args', nargs=argparse.REMAINDER)
 options = parser.parse_args()
 
-from tools.lib.test_script import get_provisioning_status
+from tools.lib.test_script import assert_provisioning_status_ok
 
-if not options.force:
-    ok, msg = get_provisioning_status()
-    if not ok:
-        print(msg)
-        print('If you really know what you are doing, use --force to run anyway.')
-        sys.exit(1)
+assert_provisioning_status_ok(options.force)
 
-os.environ['NODE_PATH'] = 'static'
 os.environ['TZ'] = 'UTC'
 
 INDEX_JS = 'frontend_tests/zjsunit/index.js'
@@ -119,7 +115,9 @@ INDEX_JS = 'frontend_tests/zjsunit/index.js'
 # Add ".js" to the end of all the file arguments, so index.js
 # can actually verify if the file exists or not.
 for index, arg in enumerate(options.args):
-    if not arg.endswith('.js'):
+    if not arg.endswith('.js') and not arg.endswith('.ts'):
+        # If it doesn't end with ".js" or ".ts", assume it is a JS file,
+        # since most files are currently JS files.
         options.args[index] = arg + '.js'
 
 individual_files = options.args

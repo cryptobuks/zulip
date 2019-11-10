@@ -1,9 +1,7 @@
-zrequire('typing_status');
-
-function return_false() { return false; }
-function return_true() { return true; }
-function return_alice() { return "alice"; }
-function return_bob() { return "bob"; }
+zrequire('typing');
+zrequire('people');
+zrequire('compose_pm_pill');
+const typing_status = zrequire('typing_status', 'shared/js/typing_status');
 
 function make_time(secs) {
     // make times semi-realistic
@@ -17,16 +15,13 @@ function returns_time(secs) {
 run_test('basics', () => {
 
     // invalid conversation basically does nothing
-    var worker = {
-        get_recipient: return_alice,
-        is_valid_conversation: return_false,
-    };
-    typing_status.handle_text_input(worker);
+    let worker = {};
+    typing_status.update(worker, null);
 
     // Start setting up more testing state.
     typing_status.initialize_state();
 
-    var events = {};
+    const events = {};
 
     function set_timeout(f, delay) {
         assert.equal(delay, 5000);
@@ -58,26 +53,19 @@ run_test('basics', () => {
         events.timer_cleared = false;
     }
 
-    function call_handler() {
+    function call_handler(new_recipient) {
         clear_events();
-        typing_status.handle_text_input(worker);
-    }
-
-    function call_stop() {
-        clear_events();
-        typing_status.stop(worker);
+        typing_status.update(worker, new_recipient);
     }
 
     worker = {
-        get_recipient: return_alice,
-        is_valid_conversation: return_true,
         get_current_time: returns_time(5),
         notify_server_start: notify_server_start,
         notify_server_stop: notify_server_stop,
     };
 
     // Start talking to alice.
-    call_handler();
+    call_handler("alice");
     assert.deepEqual(typing_status.state, {
         next_send_start_time: make_time(5 + 10),
         idle_timer: 'idle_timer_stub',
@@ -93,7 +81,7 @@ run_test('basics', () => {
 
     // type again 3 seconds later
     worker.get_current_time = returns_time(8);
-    call_handler();
+    call_handler("alice");
     assert.deepEqual(typing_status.state, {
         next_send_start_time: make_time(5 + 10),
         idle_timer: 'idle_timer_stub',
@@ -110,7 +98,7 @@ run_test('basics', () => {
     // type after 15 secs, so that we can notify the server
     // again
     worker.get_current_time = returns_time(18);
-    call_handler();
+    call_handler("alice");
     assert.deepEqual(typing_status.state, {
         next_send_start_time: make_time(18 + 10),
         idle_timer: 'idle_timer_stub',
@@ -124,7 +112,7 @@ run_test('basics', () => {
     });
 
     // Now call alice's idle callback that we captured earlier.
-    var callback = events.idle_callback;
+    const callback = events.idle_callback;
     clear_events();
     callback();
     assert.deepEqual(typing_status.state, {
@@ -140,7 +128,7 @@ run_test('basics', () => {
     });
 
     // Call stop with nothing going on.
-    call_stop();
+    call_handler(null);
     assert.deepEqual(typing_status.state, {
         next_send_start_time: undefined,
         idle_timer: undefined,
@@ -155,7 +143,7 @@ run_test('basics', () => {
 
     // Start talking to alice again.
     worker.get_current_time = returns_time(50);
-    call_handler();
+    call_handler("alice");
     assert.deepEqual(typing_status.state, {
         next_send_start_time: make_time(50 + 10),
         idle_timer: 'idle_timer_stub',
@@ -170,7 +158,7 @@ run_test('basics', () => {
     assert(events.idle_callback);
 
     // Explicitly stop alice.
-    call_stop();
+    call_handler(null);
     assert.deepEqual(typing_status.state, {
         next_send_start_time: undefined,
         idle_timer: undefined,
@@ -185,7 +173,7 @@ run_test('basics', () => {
 
     // Start talking to alice again.
     worker.get_current_time = returns_time(80);
-    call_handler();
+    call_handler("alice");
     assert.deepEqual(typing_status.state, {
         next_send_start_time: make_time(80 + 10),
         idle_timer: 'idle_timer_stub',
@@ -200,11 +188,7 @@ run_test('basics', () => {
     assert(events.idle_callback);
 
     // Switch to an invalid conversation.
-    worker.get_recipient = function () {
-        return 'not-alice';
-    };
-    worker.is_valid_conversation = return_false;
-    call_handler();
+    call_handler(null);
     assert.deepEqual(typing_status.state, {
         next_send_start_time: undefined,
         idle_timer: undefined,
@@ -218,11 +202,7 @@ run_test('basics', () => {
     });
 
     // Switch to another invalid conversation.
-    worker.get_recipient = function () {
-        return 'another-bogus-one';
-    };
-    worker.is_valid_conversation = return_false;
-    call_handler();
+    call_handler(null);
     assert.deepEqual(typing_status.state, {
         next_send_start_time: undefined,
         idle_timer: undefined,
@@ -236,10 +216,8 @@ run_test('basics', () => {
     });
 
     // Start talking to alice again.
-    worker.get_recipient = return_alice;
-    worker.is_valid_conversation = return_true;
     worker.get_current_time = returns_time(170);
-    call_handler();
+    call_handler("alice");
     assert.deepEqual(typing_status.state, {
         next_send_start_time: make_time(170 + 10),
         idle_timer: 'idle_timer_stub',
@@ -254,8 +232,6 @@ run_test('basics', () => {
     assert(events.idle_callback);
 
     // Switch to bob now.
-    worker.get_recipient = return_bob;
-    worker.is_valid_conversation = return_true;
     worker.get_current_time = returns_time(171);
 
     worker.notify_server_start = function (recipient) {
@@ -263,7 +239,7 @@ run_test('basics', () => {
         events.started = true;
     };
 
-    call_handler();
+    call_handler("bob");
     assert.deepEqual(typing_status.state, {
         next_send_start_time: make_time(171 + 10),
         idle_timer: 'idle_timer_stub',
@@ -277,4 +253,44 @@ run_test('basics', () => {
     });
     assert(events.idle_callback);
 
+    // test that we correctly detect if worker.get_recipient
+    // and typing_status.state.current_recipient are the same
+
+    compose_pm_pill.get_user_ids_string = () => '1,2,3';
+    typing_status.state.current_recipient = typing.get_recipient();
+
+    const call_count = {
+        maybe_ping_server: 0,
+        actually_ping_server: 0,
+        start_or_extend_idle_timer: 0,
+        stop_last_notification: 0,
+    };
+
+    // stub functions to see how may time they are called
+    for (const method in call_count) {
+        if (!call_count.hasOwnProperty(method)) { continue; }
+        typing_status.__Rewire__(method, function () {
+            call_count[method] += 1;
+        });
+    }
+
+    // User ids of poeple in compose narrow doesn't change and is same as stat.current_recipent
+    // so counts of function should increase except stop_last_notification
+    typing_status.update(worker, typing.get_recipient());
+    assert.deepEqual(call_count.maybe_ping_server, 1);
+    assert.deepEqual(call_count.start_or_extend_idle_timer, 1);
+    assert.deepEqual(call_count.stop_last_notification, 0);
+
+    typing_status.update(worker, typing.get_recipient());
+    assert.deepEqual(call_count.maybe_ping_server, 2);
+    assert.deepEqual(call_count.start_or_extend_idle_timer, 2);
+    assert.deepEqual(call_count.stop_last_notification, 0);
+
+    // change in recipient and new_recipient should make us
+    // call typing_status.stop_last_notification
+    compose_pm_pill.get_user_ids_string = () => '2,3,4';
+    typing_status.update(worker, typing.get_recipient());
+    assert.deepEqual(call_count.maybe_ping_server, 2);
+    assert.deepEqual(call_count.start_or_extend_idle_timer, 3);
+    assert.deepEqual(call_count.stop_last_notification, 1);
 });

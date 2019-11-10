@@ -1,36 +1,31 @@
-Hello {{ name }},
-
-While you were away you received {{ message_count }} new{% if group_pm %} group private{% elif private_message %} private{% endif %} message{{ message_count|pluralize }}{% if mention %} in which you were mentioned{% endif %}!
-
 {% if show_message_content %}
 {% for recipient_block in messages %}
-    {{ recipient_block.header.plain }}
-    {% for sender_block in recipient_block.senders %}
-        {% if sender_block.sender %}{{ sender_block.sender }}{% endif %}{% for message_block in sender_block.content %}
-            {{ message_block.plain }}
-        {% endfor %}
-    {% endfor %}
+{% for sender_block in recipient_block.senders %}
+{% for message_block in sender_block.content %}
+{{ message_block.plain }}
+{% endfor %}
+{% endfor %}
 {% endfor %}
 {% endif %}
 
-Click here to log in to Zulip and view your new messages:
-
-{{ realm_uri }}
+--
+{% if mention %}
+You are receiving this because you were mentioned in {{ realm_name }}.
+{% elif stream_email_notify %}
+You are receiving this because you have email notifications enabled for this stream.
+{% endif %}
 
 {% if reply_to_zulip  %}
-Or just reply to this email.
-{% endif %}
-{% if reply_warning %}
-Please do not reply to this automated message. To respond to the missed messages you have received, please log on to Zulip and send your replies there.
-{% endif %}
+Reply to this email directly, or view it in Zulip:
+{{ narrow_url }}
+{% else %}
+Reply in Zulip:
+{{ narrow_url }}
 
-Cheers,
-The Zulip Team
+Do not reply to this message. This Zulip server is not configured to accept
+incoming emails. Help:
+https://zulip.readthedocs.io/en/latest/production/email-gateway.html
+{% endif %}
 
 Manage email preferences:
-
 {{ realm_uri }}/#settings/notifications
-
-Unsubscribe from missed message emails:
-
-{{ unsubscribe_link }}

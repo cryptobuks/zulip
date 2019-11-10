@@ -3,7 +3,7 @@
 ## Overview
 
 Zulip does extensive linting of much of its source code, including
-Python/JavaScript files, HTML templates (Django/handlebars), CSS files,
+Python/JavaScript/TypeScript files, HTML templates (Django/handlebars), CSS files,
 JSON fixtures, Markdown documents, puppet manifests, and shell scripts.
 
 For some files we simply check for small things like trailing whitespace,
@@ -11,7 +11,7 @@ but for other files, we are quite thorough about checking semantic
 correctness.
 
 Obviously, a large reason for linting code is to enforce the [Zulip
-coding standards](../contributing/code-style.html).  But we also use the linters to
+coding standards](../contributing/code-style.md).  But we also use the linters to
 prevent common coding errors.
 
 We borrow some open source tools for much of our linting, and the links
@@ -37,7 +37,16 @@ You can also run them individually or pass specific files:
     ./tools/lint
     ./tools/lint static/js/compose.js
     ./tools/lint static/js/
-    ./tools/run-mypy
+
+`./tools/lint` has many useful options; you can read about them in its
+internal documentation using `./tools/lint --help`.  Of particular
+note are:
+* `--fix`: Several of our linters support automatically fixing basic
+  issues; this option will ask `tools/lint` to run those.
+* `--verbose`: Provides detailed information on how to fix many common
+  linter errors not covered by `--fix`.
+* `--skip` and `--only`: Only run certain linters.
+* `-m`: Only check modified files.
 
 Finally, you can rely on our Travis CI setup to run linters for you, but
 it is good practice to run lint checks locally.
@@ -56,14 +65,9 @@ Our linting tools generally support the ability to lint files
 individually--with some caveats--and those options will be described
 later in this document.
 
-We may eventually bundle `run-mypy` into `lint`, but mypy is pretty
-resource intensive compared to the rest of the linters, because it does
-static code analysis.  So we keep mypy separate to allow folks to quickly run
-the other lint checks.
-
 ## General considerations
 
-Once you have read the [Zulip coding guidelines](../contributing/code-style.html), you can
+Once you have read the [Zulip coding guidelines](../contributing/code-style.md), you can
 be pretty confident that 99% of the code that you write will pass through
 the linters fine, as long as you are thorough about keeping your code clean.
 And, of course, for minor oversights, `lint` is your friend, not your foe.
@@ -75,7 +79,7 @@ extreme cases, but often it can be a simple matter of writing your code
 in a slightly different style to appease the linter.  If you have
 problems getting something to lint, you can submit an unfinished PR
 and ask the reviewer to help you work through the lint problem, or you
-can find other people in the [Zulip Community](../contributing/chat-zulip-org.html)
+can find other people in the [Zulip Community](../contributing/chat-zulip-org.md)
 to help you.
 
 Also, bear in mind that 100% of the lint code is open source, so if you
@@ -83,7 +87,7 @@ find limitations in either the Zulip home-grown stuff or our third party
 tools, feedback will be highly appreciated.
 
 Finally, one way to clean up your code is to thoroughly exercise it
-with tests.  The [Zulip test documentation](../testing/testing.html)
+with tests.  The [Zulip test documentation](../testing/testing.md)
 describes our test system in detail.
 
 ## Lint checks
@@ -92,7 +96,7 @@ Most of our lint checks get performed by `./tools/lint`.  These include the
 following checks:
 
 - Check Python code with pyflakes.
-- Check JavaScript code with eslint.
+- Check JavaScript and TypeScript code with eslint.
 - Check Python code for custom Zulip rules.
 - Check non-Python code for custom Zulip rules.
 - Check puppet manifests with the puppet validator.
@@ -100,8 +104,10 @@ following checks:
 - Check CSS for parsability and formatting.
 - Check JavaScript code for addClass calls.
 - Running `mypy` to check static types in Python code.  Our
-  [documentation on using mypy](../testing/mypy.html) covers mypy in
+  [documentation on using mypy](../testing/mypy.md) covers mypy in
   more detail.
+- Running `tsc` to compile TypeScript code.  Our [documentation on
+  TypeScript](typescript.md) covers TypeScript in more detail.
 
 The rest of this document pertains to the checks that occur in `./tools/lint`.
 
@@ -132,8 +138,9 @@ lint checks against files that are modified in your git repo.  Most of the
 Generally, a good workflow is to run with `--modified` when you are iterating on
 the code, and then run without that option right before committing new code.
 
-If you need to troubleshoot the linters, there is a `--verbose` option that
-can give you clues about which linters may be running slow, for example.
+If you need to troubleshoot the linters, there is a `--verbose-timing`
+option that can give you clues about which linters may be running
+slow, for example.
 
 ### Lint checks
 

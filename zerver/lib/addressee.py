@@ -1,4 +1,3 @@
-
 from typing import Iterable, List, Optional, Sequence, Union, cast
 
 from django.utils.translation import ugettext as _
@@ -21,6 +20,15 @@ def raw_pm_with_emails(email_str: str, my_email: str) -> List[str]:
 
     return emails
 
+def raw_pm_with_emails_by_ids(user_ids: Iterable[int], my_email: str,
+                              realm: Realm) -> List[str]:
+    user_profiles = get_user_profiles_by_ids(user_ids, realm)
+    emails = [user_profile.email for user_profile in user_profiles]
+    if len(emails) > 1:
+        emails = [email for email in emails if email != my_email.lower()]
+
+    return emails
+
 def get_user_profiles(emails: Iterable[str], realm: Realm) -> List[UserProfile]:
     user_profiles = []  # type: List[UserProfile]
     for email in emails:
@@ -37,13 +45,12 @@ def get_user_profiles_by_ids(user_ids: Iterable[int], realm: Realm) -> List[User
         try:
             user_profile = get_user_by_id_in_realm_including_cross_realm(user_id, realm)
         except UserProfile.DoesNotExist:
-            raise JsonableError(_("Invalid user ID {}".format(user_id)))
+            raise JsonableError(_("Invalid user ID {}").format(user_id))
         user_profiles.append(user_profile)
     return user_profiles
 
 def validate_topic(topic: str) -> str:
-    if topic is None:
-        raise JsonableError(_("Missing topic"))
+    assert topic is not None
     topic = topic.strip()
     if topic == "":
         raise JsonableError(_("Topic can't be empty"))
@@ -69,6 +76,8 @@ class Addressee:
                  stream_id: Optional[int]=None,
                  topic: Optional[str]=None) -> None:
         assert(msg_type in ['stream', 'private'])
+        if msg_type == 'stream' and topic is None:
+            raise JsonableError(_("Missing topic"))
         self._msg_type = msg_type
         self._user_profiles = user_profiles
         self._stream = stream
@@ -82,9 +91,10 @@ class Addressee:
     def is_private(self) -> bool:
         return self._msg_type == 'private'
 
-    def user_profiles(self) -> List[UserProfile]:
+    def user_profiles(self) -> Sequence[UserProfile]:
         assert(self.is_private())
-        return self._user_profiles  # type: ignore # assertion protects us
+        assert self._user_profiles is not None
+        return self._user_profiles
 
     def stream(self) -> Optional[Stream]:
         assert(self.is_stream())
@@ -107,7 +117,7 @@ class Addressee:
     def legacy_build(sender: UserProfile,
                      message_type_name: str,
                      message_to: Union[Sequence[int], Sequence[str]],
-                     topic_name: str,
+                     topic_name: Optional[str],
                      realm: Optional[Realm]=None) -> 'Addressee':
 
         # For legacy reason message_to used to be either a list of
@@ -131,6 +141,9 @@ class Addressee:
                     stream_name_or_id = sender.default_sending_stream.id
                 else:
                     raise JsonableError(_('Missing stream'))
+
+            if topic_name is None:
+                raise JsonableError(_("Missing topic"))
 
             if isinstance(stream_name_or_id, int):
                 stream_id = cast(int, stream_name_or_id)

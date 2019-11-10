@@ -1,4 +1,4 @@
-var common = require('../casper_lib/common.js').common;
+var common = require('../casper_lib/common.js');
 
 common.start_and_log_in();
 
@@ -15,7 +15,7 @@ casper.then(function () {
         return $('#zhome .message_row').length;
     });
     last_message_id = this.evaluate(function () {
-        var msg = $('#zhome .message_row:last');
+        var msg = $('#zhome .message_row').last();
         msg.find('.info').click();
         $('.delete_message').click();
         return msg.attr('id');

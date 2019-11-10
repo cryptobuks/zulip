@@ -1,12 +1,13 @@
 import os
-import pathlib
 
-from typing import Dict, List, Optional, Any
-from django.conf import settings
+from typing import Dict, List, Optional, Any, Tuple
 from django.conf.urls import url
+from django.contrib.staticfiles.storage import staticfiles_storage
 from django.urls.resolvers import LocaleRegexProvider
 from django.utils.module_loading import import_string
 from django.utils.translation import ugettext as _
+from zerver.lib.storage import static_path
+from zerver.lib.types import Validator
 
 
 """This module declares all of the (documented) integrations available
@@ -46,18 +47,24 @@ CATEGORIES = {
 }  # type: Dict[str, str]
 
 class Integration:
-    DEFAULT_LOGO_STATIC_PATH_PNG = 'static/images/integrations/logos/{name}.png'
-    DEFAULT_LOGO_STATIC_PATH_SVG = 'static/images/integrations/logos/{name}.svg'
+    DEFAULT_LOGO_STATIC_PATH_PNG = 'images/integrations/logos/{name}.png'
+    DEFAULT_LOGO_STATIC_PATH_SVG = 'images/integrations/logos/{name}.svg'
 
     def __init__(self, name: str, client_name: str, categories: List[str],
                  logo: Optional[str]=None, secondary_line_text: Optional[str]=None,
                  display_name: Optional[str]=None, doc: Optional[str]=None,
-                 stream_name: Optional[str]=None, legacy: Optional[bool]=False) -> None:
+                 stream_name: Optional[str]=None, legacy: Optional[bool]=False,
+                 config_options: List[Tuple[str, str, Validator]]=[]) -> None:
         self.name = name
         self.client_name = client_name
         self.secondary_line_text = secondary_line_text
         self.legacy = legacy
         self.doc = doc
+
+        # Note: Currently only incoming webhook type bots use this list for
+        # defining how the bot's BotConfigData should be. Embedded bots follow
+        # a different approach.
+        self.config_options = config_options
 
         for category in categories:
             if category not in CATEGORIES:
@@ -68,8 +75,9 @@ class Integration:
         self.categories = list(map((lambda c: CATEGORIES[c]), categories))
 
         if logo is None:
-            logo = self.get_logo_url()
-        self.logo = logo
+            self.logo_url = self.get_logo_url()
+        else:
+            self.logo_url = staticfiles_storage.url(logo)
 
         if display_name is None:
             display_name = name.title()
@@ -83,25 +91,19 @@ class Integration:
         return True
 
     def get_logo_url(self) -> Optional[str]:
-        logo_file_path_svg = str(pathlib.PurePath(
-            settings.STATIC_ROOT,
-            *self.DEFAULT_LOGO_STATIC_PATH_SVG.format(name=self.name).split('/')[1:]
-        ))
-        logo_file_path_png = str(pathlib.PurePath(
-            settings.STATIC_ROOT,
-            *self.DEFAULT_LOGO_STATIC_PATH_PNG.format(name=self.name).split('/')[1:]
-        ))
-        if os.path.isfile(logo_file_path_svg):
-            return self.DEFAULT_LOGO_STATIC_PATH_SVG.format(name=self.name)
-        elif os.path.isfile(logo_file_path_png):
-            return self.DEFAULT_LOGO_STATIC_PATH_PNG.format(name=self.name)
+        logo_file_path_svg = self.DEFAULT_LOGO_STATIC_PATH_SVG.format(name=self.name)
+        logo_file_path_png = self.DEFAULT_LOGO_STATIC_PATH_PNG.format(name=self.name)
+        if os.path.isfile(static_path(logo_file_path_svg)):
+            return staticfiles_storage.url(logo_file_path_svg)
+        elif os.path.isfile(static_path(logo_file_path_png)):
+            return staticfiles_storage.url(logo_file_path_png)
 
         return None
 
 class BotIntegration(Integration):
-    DEFAULT_LOGO_STATIC_PATH_PNG = 'static/generated/bots/{name}/logo.png'
-    DEFAULT_LOGO_STATIC_PATH_SVG = 'static/generated/bots/{name}/logo.svg'
-    ZULIP_LOGO_STATIC_PATH_PNG = 'static/images/logo/zulip-icon-128x128.png'
+    DEFAULT_LOGO_STATIC_PATH_PNG = 'generated/bots/{name}/logo.png'
+    DEFAULT_LOGO_STATIC_PATH_SVG = 'generated/bots/{name}/logo.svg'
+    ZULIP_LOGO_STATIC_PATH_PNG = 'images/logo/zulip-icon-128x128.png'
     DEFAULT_DOC_PATH = '{name}/doc.md'
 
     def __init__(self, name: str, categories: List[str], logo: Optional[str]=None,
@@ -115,13 +117,12 @@ class BotIntegration(Integration):
         )
 
         if logo is None:
-            logo_url = self.get_logo_url()
-            if logo_url is not None:
-                logo = logo_url
-            else:
+            self.logo_url = self.get_logo_url()
+            if self.logo_url is None:
                 # TODO: Add a test for this by initializing one in a test.
-                logo = self.ZULIP_LOGO_STATIC_PATH_PNG  # nocoverage
-        self.logo = logo
+                logo = staticfiles_storage.url(self.ZULIP_LOGO_STATIC_PATH_PNG)  # nocoverage
+        else:
+            self.logo_url = staticfiles_storage.url(logo)
 
         if display_name is None:
             display_name = "{} Bot".format(name.title())  # nocoverage
@@ -133,10 +134,6 @@ class BotIntegration(Integration):
             doc = self.DEFAULT_DOC_PATH.format(name=name)
         self.doc = doc
 
-class EmailIntegration(Integration):
-    def is_enabled(self) -> bool:
-        return settings.EMAIL_GATEWAY_PATTERN != ""
-
 class WebhookIntegration(Integration):
     DEFAULT_FUNCTION_PATH = 'zerver.webhooks.{name}.view.api_{name}_webhook'
     DEFAULT_URL = 'api/v1/external/{name}'
@@ -147,7 +144,8 @@ class WebhookIntegration(Integration):
                  logo: Optional[str]=None, secondary_line_text: Optional[str]=None,
                  function: Optional[str]=None, url: Optional[str]=None,
                  display_name: Optional[str]=None, doc: Optional[str]=None,
-                 stream_name: Optional[str]=None, legacy: Optional[bool]=None) -> None:
+                 stream_name: Optional[str]=None, legacy: Optional[bool]=None,
+                 config_options: List[Tuple[str, str, Validator]]=[]) -> None:
         if client_name is None:
             client_name = self.DEFAULT_CLIENT_NAME.format(name=name.title())
         super().__init__(
@@ -158,7 +156,8 @@ class WebhookIntegration(Integration):
             secondary_line_text=secondary_line_text,
             display_name=display_name,
             stream_name=stream_name,
-            legacy=legacy
+            legacy=legacy,
+            config_options=config_options
         )
 
         if function is None:
@@ -204,36 +203,6 @@ class HubotIntegration(Integration):
             legacy=legacy
         )
 
-class GithubIntegration(WebhookIntegration):
-    """
-    We need this class to don't creating url object for git integrations.
-    We want to have one generic url with dispatch function for github service and github webhook.
-    """
-    def __init__(self, name: str, categories: List[str], client_name: Optional[str]=None,
-                 logo: Optional[str]=None, secondary_line_text: Optional[str]=None,
-                 function: Optional[str]=None, url: Optional[str]=None,
-                 display_name: Optional[str]=None, doc: Optional[str]=None,
-                 stream_name: Optional[str]=None, legacy: Optional[bool]=False) -> None:
-        url = self.DEFAULT_URL.format(name='github')
-
-        super().__init__(
-            name,
-            categories,
-            client_name=client_name,
-            logo=logo,
-            secondary_line_text=secondary_line_text,
-            function=function,
-            url=url,
-            display_name=display_name,
-            doc=doc,
-            stream_name=stream_name,
-            legacy=legacy
-        )
-
-    @property
-    def url_object(self) -> None:
-        return
-
 class EmbeddedBotIntegration(Integration):
     '''
     This class acts as a registry for bots verified as safe
@@ -267,14 +236,14 @@ WEBHOOK_INTEGRATIONS = [
     WebhookIntegration(
         'bitbucket3',
         ['version-control'],
-        logo='static/images/integrations/logos/bitbucket.svg',
+        logo='images/integrations/logos/bitbucket.svg',
         display_name='Bitbucket Server',
         stream_name='bitbucket'
     ),
     WebhookIntegration(
         'bitbucket2',
         ['version-control'],
-        logo='static/images/integrations/logos/bitbucket.svg',
+        logo='images/integrations/logos/bitbucket.svg',
         display_name='Bitbucket',
         stream_name='bitbucket'
     ),
@@ -286,6 +255,7 @@ WEBHOOK_INTEGRATIONS = [
         stream_name='commits',
         legacy=True
     ),
+    WebhookIntegration('buildbot', ['continuous-integration'], display_name='Buildbot'),
     WebhookIntegration('circleci', ['continuous-integration'], display_name='CircleCI'),
     WebhookIntegration('clubhouse', ['project-management']),
     WebhookIntegration('codeship', ['continuous-integration', 'deployment']),
@@ -295,7 +265,7 @@ WEBHOOK_INTEGRATIONS = [
     WebhookIntegration(
         'deskdotcom',
         ['customer-support'],
-        logo='static/images/integrations/logos/deskcom.png',
+        logo='images/integrations/logos/deskcom.png',
         display_name='Desk.com',
         stream_name='desk'
     ),
@@ -303,11 +273,11 @@ WEBHOOK_INTEGRATIONS = [
     WebhookIntegration('flock', ['customer-support'], display_name='Flock'),
     WebhookIntegration('freshdesk', ['customer-support']),
     WebhookIntegration('front', ['customer-support'], display_name='Front'),
-    GithubIntegration(
+    WebhookIntegration(
         'github',
         ['version-control'],
         display_name='GitHub',
-        logo='static/images/integrations/logos/github.svg',
+        logo='images/integrations/logos/github.svg',
         function='zerver.webhooks.github.view.api_github_webhook',
         stream_name='github'
     ),
@@ -317,6 +287,7 @@ WEBHOOK_INTEGRATIONS = [
     WebhookIntegration('gosquared', ['marketing'], display_name='GoSquared'),
     WebhookIntegration('greenhouse', ['hr'], display_name='Greenhouse'),
     WebhookIntegration('groove', ['customer-support'], display_name='Groove'),
+    WebhookIntegration('harbor', ['deployment', 'productivity'], display_name='Harbor'),
     WebhookIntegration('hellosign', ['productivity', 'hr'], display_name='HelloSign'),
     WebhookIntegration('helloworld', ['misc'], display_name='Hello World'),
     WebhookIntegration('heroku', ['deployment'], display_name='Heroku'),
@@ -388,8 +359,8 @@ INTEGRATIONS = {
                             doc='zerver/integrations/codebase.md'),
     'discourse': Integration('discourse', 'discourse', ['communication'],
                              doc='zerver/integrations/discourse.md'),
-    'email': EmailIntegration('email', 'email', ['communication'],
-                              doc='zerver/integrations/email.md'),
+    'email': Integration('email', 'email', ['communication'],
+                         doc='zerver/integrations/email.md'),
     'errbot': Integration('errbot', 'errbot', ['meta-integration', 'bots'],
                           doc='zerver/integrations/errbot.md'),
     'git': Integration('git', 'git', ['version-control'],
@@ -415,7 +386,7 @@ INTEGRATIONS = {
         'jira-plugin',
         'jira-plugin',
         ['project-management'],
-        logo='static/images/integrations/logos/jira.svg',
+        logo='images/integrations/logos/jira.svg',
         secondary_line_text='(locally installed)',
         display_name='JIRA',
         doc='zerver/integrations/jira-plugin.md',
@@ -456,7 +427,7 @@ INTEGRATIONS = {
         'trello-plugin',
         'trello-plugin',
         ['project-management'],
-        logo='static/images/integrations/logos/trello.svg',
+        logo='images/integrations/logos/trello.svg',
         secondary_line_text='(legacy)',
         display_name='Trello',
         doc='zerver/integrations/trello-plugin.md',
@@ -465,7 +436,7 @@ INTEGRATIONS = {
     ),
     'twitter': Integration('twitter', 'twitter', ['customer-support', 'marketing'],
                            # _ needed to get around adblock plus
-                           logo='static/images/integrations/logos/twitte_r.svg',
+                           logo='images/integrations/logos/twitte_r.svg',
                            doc='zerver/integrations/twitter.md'),
 }  # type: Dict[str, Integration]
 
@@ -473,7 +444,7 @@ BOT_INTEGRATIONS = [
     BotIntegration('github_detail', ['version-control', 'bots'],
                    display_name='GitHub Detail'),
     BotIntegration('xkcd', ['bots', 'misc'], display_name='xkcd',
-                   logo='static/images/integrations/logos/xkcd.png'),
+                   logo='images/integrations/logos/xkcd.png'),
 ]  # type: List[BotIntegration]
 
 HUBOT_INTEGRATIONS = [
@@ -487,14 +458,14 @@ HUBOT_INTEGRATIONS = [
                      logo_alt='Google Hangouts logo'),
     HubotIntegration('instagram', ['misc'], display_name='Instagram',
                      # _ needed to get around adblock plus
-                     logo='static/images/integrations/logos/instagra_m.svg'),
+                     logo='images/integrations/logos/instagra_m.svg'),
     HubotIntegration('mailchimp', ['communication', 'marketing'],
                      display_name='MailChimp'),
     HubotIntegration('google-translate', ['misc'],
                      display_name="Google Translate", logo_alt='Google Translate logo'),
     HubotIntegration('youtube', ['misc'], display_name='YouTube',
                      # _ needed to get around adblock plus
-                     logo='static/images/integrations/logos/youtub_e.svg'),
+                     logo='images/integrations/logos/youtub_e.svg'),
 ]  # type: List[HubotIntegration]
 
 for hubot_integration in HUBOT_INTEGRATIONS:

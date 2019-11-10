@@ -1,9 +1,5 @@
-var settings_ui = (function () {
-
-var exports = {};
-
 exports.display_checkmark = function ($elem) {
-    var check_mark = document.createElement("img");
+    const check_mark = document.createElement("img");
     check_mark.src = "/static/images/checkbox-green.svg";
     $elem.prepend(check_mark);
     $(check_mark).css("width", "13px");
@@ -19,14 +15,14 @@ exports.strings = {
 // UI.  Intended to replace the old system that was built around
 // direct calls to `ui_report`.
 exports.do_settings_change = function (request_method, url, data, status_element, opts) {
-    var spinner = $(status_element).expectOne();
+    const spinner = $(status_element).expectOne();
     spinner.fadeTo(0, 1);
     loading.make_indicator(spinner, {text: exports.strings.saving});
-    var success_msg;
-    var success_continuation;
-    var error_continuation;
-    var remove_after = 1000;
-    var appear_after = 500;
+    let success_msg;
+    let success_continuation;
+    let error_continuation;
+    let remove_after = 1000;
+    const appear_after = 500;
 
     if (opts !== undefined) {
         success_msg = opts.success_msg;
@@ -45,15 +41,24 @@ exports.do_settings_change = function (request_method, url, data, status_element
         data: data,
         success: function (reponse_data) {
             setTimeout(function () {
-                ui_report.success(success_msg, spinner, null, remove_after);
-                settings_ui.display_checkmark(spinner);
+                ui_report.success(success_msg, spinner, remove_after);
+                exports.display_checkmark(spinner);
             }, appear_after);
             if (success_continuation !== undefined) {
-                success_continuation(reponse_data);
+                if (opts !== undefined && opts.success_continuation_arg) {
+                    success_continuation(opts.success_continuation_arg);
+                } else {
+                    success_continuation(reponse_data);
+                }
             }
         },
         error: function (xhr) {
-            ui_report.error(exports.strings.failure, xhr, spinner);
+            if (opts !== undefined && opts.error_msg_element) {
+                loading.destroy_indicator(spinner);
+                ui_report.error(exports.strings.failure, xhr, opts.error_msg_element);
+            } else {
+                ui_report.error(exports.strings.failure, xhr, spinner);
+            }
             if (error_continuation !== undefined) {
                 error_continuation(xhr);
             }
@@ -78,10 +83,4 @@ exports.disable_sub_setting_onchange = function (is_checked, sub_setting_id, dis
     }
 };
 
-return exports;
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = settings_ui;
-}
-window.settings_ui = settings_ui;
+window.settings_ui = exports;

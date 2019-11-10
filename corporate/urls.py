@@ -11,6 +11,8 @@ i18n_urlpatterns = [
     url(r'^zephyr/$', TemplateView.as_view(template_name='corporate/zephyr.html')),
     url(r'^zephyr-mirror/$', TemplateView.as_view(template_name='corporate/zephyr-mirror.html')),
 
+    url(r'^jobs/$', TemplateView.as_view(template_name='corporate/jobs.html')),
+
     # Billing
     url(r'^billing/$', corporate.views.billing_home, name='corporate.views.billing_home'),
     url(r'^upgrade/$', corporate.views.initial_upgrade, name='corporate.views.initial_upgrade'),
@@ -19,8 +21,8 @@ i18n_urlpatterns = [
 v1_api_and_json_patterns = [
     url(r'^billing/upgrade$', rest_dispatch,
         {'POST': 'corporate.views.upgrade'}),
-    url(r'^billing/downgrade$', rest_dispatch,
-        {'POST': 'corporate.views.downgrade'}),
+    url(r'^billing/plan/change$', rest_dispatch,
+        {'POST': 'corporate.views.change_plan_at_end_of_cycle'}),
     url(r'^billing/sources/change', rest_dispatch,
         {'POST': 'corporate.views.replace_payment_source'}),
 ]

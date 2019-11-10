@@ -134,17 +134,31 @@ Some titles have been shortened for organizational purposes.
 
 *Course* - [React native and redux course][]  (*Not free!*)
 
-[React native and redux course]: https://www.udemy.com/the-complete-react-native-and-redux-course/
+[React native and redux course]: https://www.udemy.com/course/the-complete-react-native-and-redux-course/
 
 *Slides* - [TypeScript vs. CoffeeScript vs. ES6][]
 
 [TypeScript vs. CoffeeScript vs. ES6]: http://www.slideshare.net/NeilGreen1/type-script-vs-coffeescript-vs-es6
 
+## TypeScript
+
+*Tutorial* - [TypeScript handbook section on base types][typescript-handbook]
+
+[typescript-handbook]: https://www.typescriptlang.org/docs/handbook/basic-types.html
+
+*Book* - [TypeScript Deep Dive][]
+
+[TypeScript Deep Dive]: https://basarat.gitbooks.io/typescript/
+
+*Guide* - [TypeScript Declaration Files Introduction][]
+
+[TypeScript Declaration Files Introduction]: https://www.typescriptlang.org/docs/handbook/declaration-files/introduction.html
+
 ## Git/Version Control Systems (VCS)
 
 You may want to take a look first at our [Git and GitHub guide][].
 
-[Git and GitHub guide]: ../git/index.html
+[Git and GitHub guide]: ../git/index.md
 
 ## Computer Science/Algorithms
 

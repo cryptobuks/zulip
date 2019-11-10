@@ -1,6 +1,5 @@
-
 import datetime
-import re
+import lxml.html
 import ujson
 
 from django.http import HttpResponse
@@ -14,15 +13,16 @@ from zerver.lib.actions import do_change_logo_source
 from zerver.lib.events import add_realm_logo_fields
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import (
-    HostRequestMock, queries_captured, get_user_messages
+    queries_captured, get_user_messages
 )
 from zerver.lib.soft_deactivation import do_soft_deactivate_users
 from zerver.lib.test_runner import slow
 from zerver.models import (
     get_realm, get_stream, get_user, UserProfile,
     flush_per_request_caches, DefaultStream, Realm,
+    get_system_bot,
 )
-from zerver.views.home import home, sent_time_in_epoch_seconds, compute_navbar_logo_url
+from zerver.views.home import sent_time_in_epoch_seconds, compute_navbar_logo_url
 from corporate.models import Customer, CustomerPlan
 
 class HomeTest(ZulipTestCase):
@@ -35,13 +35,13 @@ class HomeTest(ZulipTestCase):
             'Keyboard shortcuts',
             'Loading...',
             'Manage streams',
-            'Narrow by topic',
+            'Narrow to topic',
             'Next message',
             'Search streams',
             'Welcome to Zulip',
             # Verify that the app styles get included
             'app-stubentry.js',
-            'var page_params',
+            'data-params',
         ]
 
         # Keep this list sorted!!!
@@ -61,7 +61,9 @@ class HomeTest(ZulipTestCase):
             "default_language",
             "default_language_name",
             "delivery_email",
+            "demote_inactive_streams",
             "dense_mode",
+            "desktop_icon_count_display",
             "development_environment",
             "email",
             "emojiset",
@@ -73,12 +75,13 @@ class HomeTest(ZulipTestCase):
             "enable_offline_push_notifications",
             "enable_online_push_notifications",
             "enable_sounds",
+            "enable_stream_audible_notifications",
             "enable_stream_desktop_notifications",
             "enable_stream_email_notifications",
             "enable_stream_push_notifications",
-            "enable_stream_sounds",
             "enter_sends",
             "first_in_realm",
+            "fluid_layout_width",
             "full_name",
             "furthest_read_time",
             "has_mobile_devices",
@@ -95,10 +98,10 @@ class HomeTest(ZulipTestCase):
             "left_side_userlist",
             "login_page",
             "max_avatar_file_size",
+            "max_file_upload_size",
             "max_icon_file_size",
             "max_logo_file_size",
             "max_message_id",
-            "maxfilesize",
             "message_content_in_email_notifications",
             "muted_topics",
             "narrow",
@@ -109,6 +112,7 @@ class HomeTest(ZulipTestCase):
             "notification_sound",
             "password_min_guesses",
             "password_min_length",
+            "plan_includes_wide_organization_logo",
             "pm_content_in_desktop_notifications",
             "pointer",
             "poll_timeout",
@@ -122,16 +126,19 @@ class HomeTest(ZulipTestCase):
             "realm_allow_message_editing",
             "realm_authentication_methods",
             "realm_available_video_chat_providers",
+            "realm_avatar_changes_disabled",
             "realm_bot_creation_policy",
             "realm_bot_domain",
             "realm_bots",
-            "realm_create_stream_by_admins_only",
+            "realm_create_stream_policy",
+            "realm_default_external_accounts",
             "realm_default_language",
             "realm_default_stream_groups",
             "realm_default_streams",
             "realm_default_twenty_four_hour_time",
             "realm_description",
             "realm_digest_emails_enabled",
+            "realm_digest_weekday",
             "realm_disallow_disposable_email_addresses",
             "realm_domains",
             "realm_email_address_visibility",
@@ -144,10 +151,12 @@ class HomeTest(ZulipTestCase):
             "realm_google_hangouts_domain",
             "realm_icon_source",
             "realm_icon_url",
+            "realm_incoming_webhook_bots",
             "realm_inline_image_preview",
             "realm_inline_url_embed_preview",
             "realm_invite_by_admins_only",
             "realm_invite_required",
+            "realm_invite_to_stream_policy",
             "realm_is_zephyr_mirror_realm",
             "realm_logo_source",
             "realm_logo_url",
@@ -171,6 +180,7 @@ class HomeTest(ZulipTestCase):
             "realm_signup_notifications_stream_id",
             "realm_upload_quota",
             "realm_uri",
+            "realm_user_group_edit_policy",
             "realm_user_groups",
             "realm_users",
             "realm_video_chat_provider",
@@ -182,9 +192,12 @@ class HomeTest(ZulipTestCase):
             "root_domain_uri",
             "save_stacktraces",
             "search_pills_enabled",
+            "server_avatar_changes_disabled",
             "server_generation",
             "server_inline_image_preview",
             "server_inline_url_embed_preview",
+            "server_name_changes_disabled",
+            "settings_send_digest_emails",
             "starred_message_counts",
             "starred_messages",
             "stop_words",
@@ -200,6 +213,7 @@ class HomeTest(ZulipTestCase):
             "two_fa_enabled_user",
             "unread_msgs",
             "unsubscribed",
+            "upgrade_text_for_wide_organization_logo",
             "use_websockets",
             "user_id",
             "user_status",
@@ -227,6 +241,8 @@ class HomeTest(ZulipTestCase):
         with queries_captured() as queries:
             with patch('zerver.lib.cache.cache_set') as cache_mock:
                 result = self._get_home_page(stream='Denmark')
+        self.assertEqual(set(result["Cache-Control"].split(", ")),
+                         {"must-revalidate", "no-store", "no-cache"})
 
         self.assert_length(queries, 45)
         self.assert_length(cache_mock.call_args_list, 7)
@@ -340,10 +356,9 @@ class HomeTest(ZulipTestCase):
         return result
 
     def _get_page_params(self, result: HttpResponse) -> Dict[str, Any]:
-        html = result.content.decode('utf-8')
-        lines = html.split('\n')
-        page_params_line = [l for l in lines if re.match(r'^\s*var page_params', l)][0]
-        page_params_json = page_params_line.split(' = ')[1].rstrip(';')
+        doc = lxml.html.document_fromstring(result.content)
+        [div] = doc.xpath("//div[@id='page-params']")
+        page_params_json = div.get("data-params")
         page_params = ujson.loads(page_params_json)
         return page_params
 
@@ -430,6 +445,8 @@ class HomeTest(ZulipTestCase):
         self._sanity_check(result)
         html = result.content.decode('utf-8')
         self.assertIn('lunch', html)
+        self.assertEqual(set(result["Cache-Control"].split(", ")),
+                         {"must-revalidate", "no-store", "no-cache"})
 
     def test_notifications_stream(self) -> None:
         email = self.example_email("hamlet")
@@ -548,7 +565,7 @@ class HomeTest(ZulipTestCase):
         self.assertNotIn('defunct-1@zulip.com', active_emails)
 
         cross_bots = page_params['cross_realm_bots']
-        self.assertEqual(len(cross_bots), 5)
+        self.assertEqual(len(cross_bots), 4)
         cross_bots.sort(key=lambda d: d['email'])
         for cross_bot in cross_bots:
             # These are either nondeterministic or boring
@@ -562,21 +579,14 @@ class HomeTest(ZulipTestCase):
 
         self.assertEqual(sorted(cross_bots, key=by_email), sorted([
             dict(
-                user_id=get_user('new-user-bot@zulip.com', get_realm('zulip')).id,
-                is_admin=False,
-                email='new-user-bot@zulip.com',
-                full_name='Zulip New User Bot',
-                is_bot=True
-            ),
-            dict(
-                user_id=get_user('emailgateway@zulip.com', get_realm('zulip')).id,
+                user_id=get_system_bot('emailgateway@zulip.com').id,
                 is_admin=False,
                 email='emailgateway@zulip.com',
                 full_name='Email Gateway',
                 is_bot=True
             ),
             dict(
-                user_id=get_user('feedback@zulip.com', get_realm('zulip')).id,
+                user_id=get_system_bot('feedback@zulip.com').id,
                 is_admin=False,
                 email='feedback@zulip.com',
                 full_name='Zulip Feedback Bot',
@@ -590,7 +600,7 @@ class HomeTest(ZulipTestCase):
                 is_bot=True
             ),
             dict(
-                user_id=get_user('welcome-bot@zulip.com', get_realm('zulip')).id,
+                user_id=get_system_bot('welcome-bot@zulip.com').id,
                 is_admin=False,
                 email='welcome-bot@zulip.com',
                 full_name='Welcome Bot',
@@ -625,7 +635,7 @@ class HomeTest(ZulipTestCase):
         html = result.content.decode('utf-8')
         self.assertNotIn('Invite more users', html)
 
-        user_profile.is_realm_admin = True
+        user_profile.role = UserProfile.ROLE_REALM_ADMINISTRATOR
         user_profile.save()
         result = self._get_home_page()
         html = result.content.decode('utf-8')
@@ -663,9 +673,9 @@ class HomeTest(ZulipTestCase):
         self.assertIn('Billing', result_html)
 
         # billing admin, with CustomerPlan -> show billing link
-        user.is_realm_admin = False
+        user.role = UserProfile.ROLE_REALM_ADMINISTRATOR
         user.is_billing_admin = True
-        user.save(update_fields=['is_realm_admin', 'is_billing_admin'])
+        user.save(update_fields=['role', 'is_billing_admin'])
         result_html = self._get_home_page().content.decode('utf-8')
         self.assertIn('Billing', result_html)
 
@@ -744,23 +754,23 @@ class HomeTest(ZulipTestCase):
         page_params = {"night_mode": True}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/logo.png?version=2")
+                         "/user_avatars/%s/realm/logo.png?version=2" % (user_profile.realm_id,))
 
         page_params = {"night_mode": False}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/logo.png?version=2")
+                         "/user_avatars/%s/realm/logo.png?version=2" % (user_profile.realm_id,))
 
         do_change_logo_source(user_profile.realm, Realm.LOGO_UPLOADED, night=True)
         page_params = {"night_mode": True}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/night_logo.png?version=2")
+                         "/user_avatars/%s/realm/night_logo.png?version=2" % (user_profile.realm_id,))
 
         page_params = {"night_mode": False}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/logo.png?version=2")
+                         "/user_avatars/%s/realm/logo.png?version=2" % (user_profile.realm_id,))
 
         # This configuration isn't super supported in the UI and is a
         # weird choice, but we have a test for it anyway.
@@ -768,7 +778,7 @@ class HomeTest(ZulipTestCase):
         page_params = {"night_mode": True}
         add_realm_logo_fields(page_params, user_profile.realm)
         self.assertEqual(compute_navbar_logo_url(page_params),
-                         "/user_avatars/1/realm/night_logo.png?version=2")
+                         "/user_avatars/%s/realm/night_logo.png?version=2" % (user_profile.realm_id,))
 
         page_params = {"night_mode": False}
         add_realm_logo_fields(page_params, user_profile.realm)
@@ -783,18 +793,10 @@ class HomeTest(ZulipTestCase):
 
     def test_message_sent_time(self) -> None:
         epoch_seconds = 1490472096
-        pub_date = datetime.datetime.fromtimestamp(epoch_seconds)
+        date_sent = datetime.datetime.fromtimestamp(epoch_seconds)
         user_message = MagicMock()
-        user_message.message.pub_date = pub_date
+        user_message.message.date_sent = date_sent
         self.assertEqual(sent_time_in_epoch_seconds(user_message), epoch_seconds)
-
-    def test_handlebars_compile_error(self) -> None:
-        request = HostRequestMock()
-        with self.settings(DEVELOPMENT=True, TEST_SUITE=False):
-            with patch('os.path.exists', return_value=True):
-                result = home(request)
-        self.assertEqual(result.status_code, 500)
-        self.assert_in_response('Error compiling handlebars templates.', result)
 
     def test_subdomain_homepage(self) -> None:
         email = self.example_email("hamlet")

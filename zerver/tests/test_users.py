@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from email.utils import parseaddr
+
 from typing import (Any, Dict, Iterable, List, Mapping,
                     Optional, TypeVar, Union)
 
@@ -12,14 +14,15 @@ from zerver.lib.test_classes import (
     ZulipTestCase,
 )
 
-from zerver.models import UserProfile, Recipient, \
-    RealmDomain, UserHotspot, \
+from zerver.models import UserProfile, Recipient, Realm, \
+    RealmDomain, UserHotspot, get_client, \
     get_user, get_realm, get_stream, get_stream_recipient, \
-    get_source_profile, \
+    get_source_profile, get_system_bot, \
     ScheduledEmail, check_valid_user_ids, \
-    get_user_by_id_in_realm_including_cross_realm, CustomProfileField
+    get_user_by_id_in_realm_including_cross_realm, CustomProfileField, \
+    InvalidFakeEmailDomain, get_fake_email_domain
 
-from zerver.lib.avatar import avatar_url
+from zerver.lib.avatar import avatar_url, get_gravatar_url
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.send_email import send_future_email, clear_scheduled_emails, \
     deliver_email
@@ -30,12 +33,17 @@ from zerver.lib.actions import (
     do_reactivate_user,
     do_change_is_admin,
     do_create_user,
+    do_set_realm_property,
 )
 from zerver.lib.create_user import copy_user_settings
+from zerver.lib.events import do_events_register
 from zerver.lib.topic_mutes import add_topic_mute
 from zerver.lib.stream_topic import StreamTopicTarget
 from zerver.lib.users import user_ids_to_users, access_user_by_id, \
     get_accounts_for_email
+
+from django.conf import settings
+from django.test import override_settings
 
 import datetime
 import mock
@@ -70,10 +78,15 @@ class PermissionTest(ZulipTestCase):
     def test_get_admin_users(self) -> None:
         user_profile = self.example_user('hamlet')
         do_change_is_admin(user_profile, False)
-        admin_users = user_profile.realm.get_admin_users()
+        admin_users = user_profile.realm.get_human_admin_users()
         self.assertFalse(user_profile in admin_users)
+        admin_users = user_profile.realm.get_admin_users_and_bots()
+        self.assertFalse(user_profile in admin_users)
+
         do_change_is_admin(user_profile, True)
-        admin_users = user_profile.realm.get_admin_users()
+        admin_users = user_profile.realm.get_human_admin_users()
+        self.assertTrue(user_profile in admin_users)
+        admin_users = user_profile.realm.get_admin_users_and_bots()
         self.assertTrue(user_profile in admin_users)
 
     def test_updating_non_existent_user(self) -> None:
@@ -108,7 +121,7 @@ class PermissionTest(ZulipTestCase):
         with tornado_redirected_to_list(events):
             result = self.client_patch('/json/users/{}'.format(self.example_user("othello").id), req)
         self.assert_json_success(result)
-        admin_users = realm.get_admin_users()
+        admin_users = realm.get_human_admin_users()
         self.assertTrue(user in admin_users)
         person = events[0]['event']['person']
         self.assertEqual(person['email'], self.example_email("othello"))
@@ -120,7 +133,7 @@ class PermissionTest(ZulipTestCase):
         with tornado_redirected_to_list(events):
             result = self.client_patch('/json/users/{}'.format(self.example_user("othello").id), req)
         self.assert_json_success(result)
-        admin_users = realm.get_admin_users()
+        admin_users = realm.get_human_admin_users()
         self.assertFalse(user in admin_users)
         person = events[0]['event']['person']
         self.assertEqual(person['email'], self.example_email("othello"))
@@ -133,7 +146,7 @@ class PermissionTest(ZulipTestCase):
         with tornado_redirected_to_list(events):
             result = self.client_patch('/json/users/{}'.format(self.example_user("hamlet").id), req)
         self.assert_json_success(result)
-        admin_users = realm.get_admin_users()
+        admin_users = realm.get_human_admin_users()
         self.assertFalse(admin in admin_users)
         person = events[0]['event']['person']
         self.assertEqual(person['email'], self.example_email("hamlet"))
@@ -146,6 +159,71 @@ class PermissionTest(ZulipTestCase):
         self.login(self.example_email("othello"))
         result = self.client_patch('/json/users/{}'.format(self.example_user("hamlet").id), req)
         self.assert_json_error(result, 'Insufficient permission')
+
+    def test_admin_api_hide_emails(self) -> None:
+        user = self.example_user('hamlet')
+        admin = self.example_user('iago')
+        self.login(user.email)
+
+        # First, verify client_gravatar works normally
+        result = self.client_get('/json/users?client_gravatar=true')
+        self.assert_json_success(result)
+        members = result.json()['members']
+        hamlet = find_dict(members, 'user_id', user.id)
+        self.assertEqual(hamlet['email'], user.email)
+        self.assertIsNone(hamlet['avatar_url'])
+        self.assertNotIn('delivery_email', hamlet)
+
+        # Also verify the /events code path.  This is a bit hacky, but
+        # we need to verify client_gravatar is not being overridden.
+        with mock.patch('zerver.lib.events.request_event_queue',
+                        return_value=None) as mock_request_event_queue:
+            with self.assertRaises(JsonableError):
+                result = do_events_register(user, get_client("website"),
+                                            client_gravatar=True)
+            self.assertEqual(mock_request_event_queue.call_args_list[0][0][3],
+                             True)
+
+        #############################################################
+        # Now, switch email address visibility, check client_gravatar
+        # is automatically disabled for the user.
+        do_set_realm_property(user.realm, "email_address_visibility",
+                              Realm.EMAIL_ADDRESS_VISIBILITY_ADMINS)
+        result = self.client_get('/json/users?client_gravatar=true')
+        self.assert_json_success(result)
+        members = result.json()['members']
+        hamlet = find_dict(members, 'user_id', user.id)
+        self.assertEqual(hamlet['email'], "user%s@zulip.testserver" % (user.id,))
+        # Note that the Gravatar URL should still be computed from the
+        # `delivery_email`; otherwise, we won't be able to serve the
+        # user's Gravatar.
+        self.assertEqual(hamlet['avatar_url'], get_gravatar_url(user.delivery_email, 1))
+        self.assertNotIn('delivery_email', hamlet)
+
+        # Also verify the /events code path.  This is a bit hacky, but
+        # basically we want to verify client_gravatar is being
+        # overridden.
+        with mock.patch('zerver.lib.events.request_event_queue',
+                        return_value=None) as mock_request_event_queue:
+            with self.assertRaises(JsonableError):
+                result = do_events_register(user, get_client("website"),
+                                            client_gravatar=True)
+            self.assertEqual(mock_request_event_queue.call_args_list[0][0][3],
+                             False)
+
+        # client_gravatar is still turned off for admins.  In theory,
+        # it doesn't need to be, but client-side changes would be
+        # required in apps like the mobile apps.
+        # delivery_email is sent for admins.
+        admin.refresh_from_db()
+        self.login(admin.delivery_email)
+        result = self.client_get('/json/users?client_gravatar=true')
+        self.assert_json_success(result)
+        members = result.json()['members']
+        hamlet = find_dict(members, 'user_id', user.id)
+        self.assertEqual(hamlet['email'], "user%s@zulip.testserver" % (user.id,))
+        self.assertEqual(hamlet['avatar_url'], get_gravatar_url(user.email, 1))
+        self.assertEqual(hamlet['delivery_email'], self.example_email("hamlet"))
 
     def test_user_cannot_promote_to_admin(self) -> None:
         self.login(self.example_email("hamlet"))
@@ -203,7 +281,7 @@ class PermissionTest(ZulipTestCase):
             access_user_by_id(iago, self.mit_user("sipbtest").id)
 
         # Can only access bot users if allow_deactivated is passed
-        bot = self.example_user("welcome_bot")
+        bot = self.example_user("default_bot")
         access_user_by_id(iago, bot.id, allow_bots=True)
         with self.assertRaises(JsonableError):
             access_user_by_id(iago, bot.id)
@@ -242,6 +320,7 @@ class PermissionTest(ZulipTestCase):
 
         hamlet = self.example_user("hamlet")
         self.assertTrue(hamlet.is_guest)
+        self.assertFalse(hamlet.can_access_all_realm_members())
         person = events[0]['event']['person']
         self.assertEqual(person['email'], hamlet.email)
         self.assertTrue(person['is_guest'])
@@ -327,10 +406,6 @@ class PermissionTest(ZulipTestCase):
         self.assertEqual(person['email'], polonius.email)
         self.assertTrue(person['is_admin'])
 
-        person = events[1]['event']['person']
-        self.assertEqual(person['email'], polonius.email)
-        self.assertFalse(person['is_guest'])
-
     def test_admin_user_can_change_profile_data(self) -> None:
         realm = get_realm('zulip')
         self.login(self.example_email("iago"))
@@ -344,8 +419,9 @@ class PermissionTest(ZulipTestCase):
             'Favorite food': 'short text data',
             'Favorite editor': 'vim',
             'Birthday': '1909-3-5',
-            'GitHub profile': 'https://github.com/ABC',
+            'Favorite website': 'https://zulipchat.com',
             'Mentor': [cordelia.id],
+            'GitHub': 'timabbott',
         }
 
         for field_name in fields:
@@ -362,14 +438,13 @@ class PermissionTest(ZulipTestCase):
         cordelia = self.example_user("cordelia")
         for field_dict in cordelia.profile_data:
             with self.subTest(field_name=field_dict['name']):
-                self.assertEqual(field_dict['value'], fields[field_dict['name']])  # type: ignore # Reason in comment
-            # Invalid index type for dict key, it must be str but field_dict values can be anything
+                self.assertEqual(field_dict['value'], fields[field_dict['name']])
 
         # Test admin user cannot set invalid profile data
         invalid_fields = [
             ('Favorite editor', 'invalid choice', "'invalid choice' is not a valid choice for 'Favorite editor'."),
             ('Birthday', '1909-34-55', "Birthday is not a date"),
-            ('GitHub profile', 'not url', "GitHub profile is not a URL"),
+            ('Favorite website', 'not url', "Favorite website is not a URL"),
             ('Mentor', "not list of user ids", "User IDs is not a list"),
         ]
 
@@ -429,8 +504,9 @@ class PermissionTest(ZulipTestCase):
             'Favorite food': None,
             'Favorite editor': None,
             'Birthday': None,
-            'GitHub profile': 'https://github.com/DEF',
-            'Mentor': [hamlet.id]
+            'Favorite website': 'https://zulip.github.io',
+            'Mentor': [hamlet.id],
+            'GitHub': 'timabbott',
         }
         new_profile_data = []
         for field_name in fields:
@@ -579,14 +655,14 @@ class UserProfileTest(ZulipTestCase):
         realm = get_realm("zulip")
         hamlet = self.example_user('hamlet')
         othello = self.example_user('othello')
-        bot = self.example_user("welcome_bot")
+        bot = self.example_user("default_bot")
 
         # Invalid user ID
         invalid_uid = 1000  # type: Any
         self.assertEqual(check_valid_user_ids(realm.id, invalid_uid),
                          "User IDs is not a list")
         self.assertEqual(check_valid_user_ids(realm.id, [invalid_uid]),
-                         "Invalid user ID: %d" % (invalid_uid))
+                         "Invalid user ID: %d" % (invalid_uid,))
 
         invalid_uid = "abc"
         self.assertEqual(check_valid_user_ids(realm.id, [invalid_uid]),
@@ -597,19 +673,19 @@ class UserProfileTest(ZulipTestCase):
 
         # User is in different realm
         self.assertEqual(check_valid_user_ids(get_realm("zephyr").id, [hamlet.id]),
-                         "Invalid user ID: %d" % (hamlet.id))
+                         "Invalid user ID: %d" % (hamlet.id,))
 
         # User is not active
         hamlet.is_active = False
         hamlet.save()
         self.assertEqual(check_valid_user_ids(realm.id, [hamlet.id]),
-                         "User with ID %d is deactivated" % (hamlet.id))
+                         "User with ID %d is deactivated" % (hamlet.id,))
         self.assertEqual(check_valid_user_ids(realm.id, [hamlet.id], allow_deactivated=True),
                          None)
 
         # User is a bot
         self.assertEqual(check_valid_user_ids(realm.id, [bot.id]),
-                         "User with ID %d is a bot" % (bot.id))
+                         "User with ID %d is a bot" % (bot.id,))
 
         # Succesfully get non-bot, active user belong to your realm
         self.assertEqual(check_valid_user_ids(realm.id, [othello.id]), None)
@@ -711,7 +787,7 @@ class UserProfileTest(ZulipTestCase):
         hamlet = self.example_user("hamlet")
 
         cordelia.default_language = "de"
-        cordelia.emojiset = "apple"
+        cordelia.emojiset = "twitter"
         cordelia.timezone = "America/Phoenix"
         cordelia.night_mode = True
         cordelia.enable_offline_email_notifications = False
@@ -736,8 +812,8 @@ class UserProfileTest(ZulipTestCase):
         self.assertEqual(cordelia.default_language, "de")
         self.assertEqual(hamlet.default_language, "en")
 
-        self.assertEqual(iago.emojiset, "apple")
-        self.assertEqual(cordelia.emojiset, "apple")
+        self.assertEqual(iago.emojiset, "twitter")
+        self.assertEqual(cordelia.emojiset, "twitter")
         self.assertEqual(hamlet.emojiset, "google-blob")
 
         self.assertEqual(iago.timezone, "America/Phoenix")
@@ -767,7 +843,7 @@ class UserProfileTest(ZulipTestCase):
         realm = get_realm('zulip')
         hamlet = self.example_user('hamlet')
         othello = self.example_user('othello')
-        bot = self.example_user('welcome_bot')
+        bot = get_system_bot(settings.WELCOME_BOT)
 
         # Pass in the ID of a cross-realm bot and a valid realm
         cross_realm_bot = get_user_by_id_in_realm_including_cross_realm(
@@ -778,7 +854,7 @@ class UserProfileTest(ZulipTestCase):
         # Pass in the ID of a cross-realm bot but with a invalid realm,
         # note that the realm should be irrelevant here
         cross_realm_bot = get_user_by_id_in_realm_including_cross_realm(
-            bot.id, get_realm('invalid'))
+            bot.id, None)
         self.assertEqual(cross_realm_bot.email, bot.email)
         self.assertEqual(cross_realm_bot.id, bot.id)
 
@@ -792,7 +868,7 @@ class UserProfileTest(ZulipTestCase):
         # cross-realm bot, UserProfile.DoesNotExist is raised
         with self.assertRaises(UserProfile.DoesNotExist):
             get_user_by_id_in_realm_including_cross_realm(
-                hamlet.id, get_realm('invalid'))
+                hamlet.id, None)
 
 class ActivateTest(ZulipTestCase):
     def test_basics(self) -> None:
@@ -909,7 +985,8 @@ class ActivateTest(ZulipTestCase):
         from django.core.mail import outbox
         self.assertEqual(len(outbox), 1)
         for message in outbox:
-            self.assertEqual(set([hamlet.delivery_email, iago.delivery_email]), set(message.to))
+            to_fields = [parseaddr(to_field)[1] for to_field in message.to]
+            self.assertEqual(set([hamlet.delivery_email, iago.delivery_email]), set(to_fields))
         self.assertEqual(ScheduledEmail.objects.count(), 0)
 
 class RecipientInfoTest(ZulipTestCase):
@@ -934,10 +1011,6 @@ class RecipientInfoTest(ZulipTestCase):
             topic_name=topic_name,
         )
 
-        sub = get_subscription(stream_name, hamlet)
-        sub.push_notifications = True
-        sub.save()
-
         info = get_recipient_info(
             recipient=recipient,
             sender_id=hamlet.id,
@@ -949,7 +1022,7 @@ class RecipientInfoTest(ZulipTestCase):
         expected_info = dict(
             active_user_ids=all_user_ids,
             push_notify_user_ids=set(),
-            stream_push_user_ids={hamlet.id},
+            stream_push_user_ids=set(),
             stream_email_user_ids=set(),
             um_eligible_user_ids=all_user_ids,
             long_term_idle_user_ids=set(),
@@ -958,6 +1031,37 @@ class RecipientInfoTest(ZulipTestCase):
         )
 
         self.assertEqual(info, expected_info)
+
+        hamlet.enable_stream_push_notifications = True
+        hamlet.save()
+        info = get_recipient_info(
+            recipient=recipient,
+            sender_id=hamlet.id,
+            stream_topic=stream_topic,
+        )
+        self.assertEqual(info['stream_push_user_ids'], {hamlet.id})
+
+        sub = get_subscription(stream_name, hamlet)
+        sub.push_notifications = False
+        sub.save()
+        info = get_recipient_info(
+            recipient=recipient,
+            sender_id=hamlet.id,
+            stream_topic=stream_topic,
+        )
+        self.assertEqual(info['stream_push_user_ids'], set())
+
+        hamlet.enable_stream_push_notifications = False
+        hamlet.save()
+        sub = get_subscription(stream_name, hamlet)
+        sub.push_notifications = True
+        sub.save()
+        info = get_recipient_info(
+            recipient=recipient,
+            sender_id=hamlet.id,
+            stream_topic=stream_topic,
+        )
+        self.assertEqual(info['stream_push_user_ids'], {hamlet.id})
 
         # Now mute Hamlet to omit him from stream_push_user_ids.
         add_topic_mute(
@@ -1169,3 +1273,14 @@ class GetProfileTest(ZulipTestCase):
                     user['avatar_url'],
                     avatar_url(user_profile),
                 )
+
+class FakeEmailDomainTest(ZulipTestCase):
+    @override_settings(FAKE_EMAIL_DOMAIN="invaliddomain")
+    def test_invalid_fake_email_domain(self) -> None:
+        with self.assertRaises(InvalidFakeEmailDomain):
+            get_fake_email_domain()
+
+    @override_settings(FAKE_EMAIL_DOMAIN="127.0.0.1")
+    def test_invalid_fake_email_domain_ip(self) -> None:
+        with self.assertRaises(InvalidFakeEmailDomain):
+            get_fake_email_domain()

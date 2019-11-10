@@ -1,15 +1,12 @@
-
 import ujson
 
 from django.http import HttpResponse
 from django.test import override_settings
-from mock import patch
-from typing import Any, Dict
+from typing import Any, Dict, Union
 
 from zerver.lib.initial_password import initial_password
-from zerver.lib.sessions import get_session_dict_user
 from zerver.lib.test_classes import ZulipTestCase
-from zerver.lib.test_helpers import MockLDAP
+from zerver.lib.test_helpers import get_test_image_file
 from zerver.lib.users import get_all_api_keys
 from zerver.models import get_realm, UserProfile, \
     get_user_profile_by_api_key
@@ -78,7 +75,7 @@ class ChangeSettingsTest(ZulipTestCase):
         self.logout()
         self.login(self.example_email("hamlet"), "foobar1")
         user_profile = self.example_user('hamlet')
-        self.assertEqual(get_session_dict_user(self.client.session), user_profile.id)
+        self.assert_logged_in_user_id(user_profile.id)
 
     def test_illegal_name_changes(self) -> None:
         user = self.example_user('hamlet')
@@ -187,24 +184,13 @@ class ChangeSettingsTest(ZulipTestCase):
 
     @override_settings(AUTHENTICATION_BACKENDS=('zproject.backends.ZulipLDAPAuthBackend',
                                                 'zproject.backends.EmailAuthBackend',
-                                                'zproject.backends.ZulipDummyBackend'),
-                       AUTH_LDAP_BIND_PASSWORD='',
-                       AUTH_LDAP_USER_DN_TEMPLATE='uid=%(user)s,ou=users,dc=zulip,dc=com')
+                                                'zproject.backends.ZulipDummyBackend'))
     def test_change_password_ldap_backend(self) -> None:
-        ldap_user_attr_map = {'full_name': 'fn', 'short_name': 'sn'}
-        ldap_patcher = patch('django_auth_ldap.config.ldap.initialize')
-        mock_initialize = ldap_patcher.start()
-        mock_ldap = MockLDAP()
-        mock_initialize.return_value = mock_ldap
-
-        mock_ldap.directory = {
-            'uid=hamlet,ou=users,dc=zulip,dc=com': {
-                'userPassword': ['ldappassword', ],
-                'fn': ['New LDAP fullname']
-            }
-        }
+        self.init_default_ldap_database()
+        ldap_user_attr_map = {'full_name': 'cn', 'short_name': 'sn'}
 
         self.login(self.example_email("hamlet"))
+
         with self.settings(LDAP_APPEND_DOMAIN="zulip.com",
                            AUTH_LDAP_USER_ATTR_MAP=ldap_user_attr_map):
             result = self.client_patch(
@@ -218,7 +204,7 @@ class ChangeSettingsTest(ZulipTestCase):
             result = self.client_patch(
                 "/json/settings",
                 dict(
-                    old_password='ldappassword',
+                    old_password=self.ldap_password(),  # hamlet's password in ldap
                     new_password="ignored",
                 ))
             self.assert_json_error(result, "Your Zulip password is managed in LDAP")
@@ -260,6 +246,7 @@ class ChangeSettingsTest(ZulipTestCase):
             default_language = 'de',
             emojiset = 'google',
             timezone = 'US/Mountain',
+            demote_inactive_streams = 2,
         )  # type: Dict[str, Any]
 
         email = self.example_email('hamlet')
@@ -267,10 +254,14 @@ class ChangeSettingsTest(ZulipTestCase):
         test_value = test_changes.get(setting_name)
         # Error if a setting in UserProfile.property_types does not have test values
         if test_value is None:
-            raise AssertionError('No test created for %s' % (setting_name))
-        invalid_value = 'invalid_' + setting_name
+            raise AssertionError('No test created for %s' % (setting_name,))
 
+        if setting_name == 'demote_inactive_streams':
+            invalid_value = 4  # type: Union[int, str]
+        else:
+            invalid_value = 'invalid_' + setting_name
         data = {setting_name: ujson.dumps(test_value)}
+
         result = self.client_patch("/json/settings/display", data)
         self.assert_json_success(result)
         user_profile = self.example_user('hamlet')
@@ -279,11 +270,16 @@ class ChangeSettingsTest(ZulipTestCase):
         # Test to make sure invalid settings are not accepted
         # and saved in the db.
         data = {setting_name: ujson.dumps(invalid_value)}
+
         result = self.client_patch("/json/settings/display", data)
         # the json error for multiple word setting names (ex: default_language)
         # displays as 'Invalid language'. Using setting_name.split('_') to format.
-        self.assert_json_error(result, "Invalid %s '%s'" % (setting_name.split('_')[-1],
-                                                            invalid_value))
+        if setting_name == 'demote_inactive_streams':
+            self.assert_json_error(result, "Invalid setting value '%s'" % (invalid_value,))
+        else:
+            self.assert_json_error(result, "Invalid %s '%s'" % (setting_name.split('_')[-1],
+                                                                invalid_value))
+
         user_profile = self.example_user('hamlet')
         self.assertNotEqual(getattr(user_profile, setting_name), invalid_value)
 
@@ -307,12 +303,25 @@ class ChangeSettingsTest(ZulipTestCase):
 
         for emojiset in banned_emojisets:
             result = self.do_change_emojiset(emojiset)
-            self.assert_json_error(result, "Invalid emojiset '%s'" % (emojiset))
+            self.assert_json_error(result, "Invalid emojiset '%s'" % (emojiset,))
 
         for emojiset in valid_emojisets:
             result = self.do_change_emojiset(emojiset)
             self.assert_json_success(result)
 
+    def test_avatar_changes_disabled(self) -> None:
+        user = self.example_user('hamlet')
+        email = user.email
+        self.login(email)
+
+        with self.settings(AVATAR_CHANGES_DISABLED=True):
+            result = self.client_delete("/json/users/me/avatar")
+            self.assert_json_error(result, "Avatar changes are disabled in this organization.", 400)
+
+        with self.settings(AVATAR_CHANGES_DISABLED=True):
+            with get_test_image_file('img.png') as fp1:
+                result = self.client_post("/json/users/me/avatar", {'f1': fp1})
+            self.assert_json_error(result, "Avatar changes are disabled in this organization.", 400)
 
 class UserChangesTest(ZulipTestCase):
     def test_update_api_key(self) -> None:

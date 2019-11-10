@@ -33,7 +33,6 @@ set_global('$', () => {});
 set_global('resize', {});
 set_global('feature_flags', {});
 set_global('page_params', {});
-set_global('templates', {});
 
 const ignore_modules = [
     'activity',
@@ -73,7 +72,8 @@ _.each(ignore_modules, (mod) => {
 zrequire('util');
 
 util.is_mobile = () => false;
-templates.render = () => 'some-html';
+global.stub_templates(() => 'some-html');
+ui.get_scroll_element = element => element;
 
 zrequire('echo');
 zrequire('colorspace');
@@ -120,6 +120,7 @@ zrequire('starred_messages');
 zrequire('user_status');
 zrequire('user_status_ui');
 zrequire('ui_init');
+zrequire('settings_display');
 
 set_global('$', global.make_zjquery());
 
@@ -139,6 +140,7 @@ page_params.subscriptions = [];
 page_params.unsubscribed = [];
 page_params.never_subscribed = [];
 page_params.realm_notifications_stream_id = -1;
+page_params.unread_msgs = {};
 
 $('#tab_bar').append = () => {};
 $('#compose').filedrop = () => {};
@@ -159,6 +161,7 @@ const count_stub = $.create('count');
 count_stub.set_find_results('.value', value_stub);
 $(".top_left_starred_messages").set_find_results('.count', count_stub);
 
+$("#tab_list .stream").length = 0;
 
 run_test('initialize_everything', () => {
     ui_init.initialize_everything();

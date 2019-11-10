@@ -1,10 +1,12 @@
-
 from typing import Any, Dict, List
 
 from .template_parser import (
     tokenize,
     is_django_block_tag,
 )
+
+from zulint.printer import GREEN, ENDC
+
 import subprocess
 
 def pretty_print_html(html, num_spaces=4):
@@ -39,7 +41,9 @@ def pretty_print_html(html, num_spaces=4):
     for token in tokens:
 
         if token.kind in ('html_start', 'handlebars_start', 'handlebars_singleton',
-                          'html_singleton', 'django_start') and stack[-1]['tag'] != 'pre':
+                          'html_singleton', 'django_start',
+                          'jinja2_whitespace_stripped_type2_start',
+                          'jinja2_whitespace_stripped_start') and stack[-1]['tag'] != 'pre':
             # An HTML start tag should only cause a new indent if we
             # are on a new line.
             if (token.tag not in ('extends', 'include', 'else', 'elif') and
@@ -50,8 +54,12 @@ def pretty_print_html(html, num_spaces=4):
                 if is_block:
                     if (((token.kind == 'handlebars_start' and
                             stack[-1]['token_kind'] == 'handlebars_start') or
-                            (token.kind == 'django_start' and
-                             stack[-1]['token_kind'] == 'django_start')) and
+                            (token.kind in {'django_start',
+                                            'jinja2_whitespace_stripped_type2_start',
+                                            'jinja2_whitespace_stripped_start'} and
+                             stack[-1]['token_kind'] in {'django_start',
+                                                         'jinja2_whitespace_stripped_type2_start',
+                                                         'jinja2_whitespace_stripped_start'})) and
                             not stack[-1]['indenting']):
                         info = stack.pop()
                         info['depth'] = info['depth'] + 1
@@ -94,7 +102,8 @@ def pretty_print_html(html, num_spaces=4):
                     )
                 stack.append(info)
         elif (token.kind in ('html_end', 'handlebars_end', 'html_singleton_end',
-                             'django_end', 'handlebars_singleton_end') and
+                             'django_end', 'handlebars_singleton_end',
+                             'jinja2_whitespace_stripped_end') and
               (stack[-1]['tag'] != 'pre' or token.tag == 'pre')):
             info = stack.pop()
             if info['block']:
@@ -182,20 +191,27 @@ def pretty_print_html(html, num_spaces=4):
     return '\n'.join(formatted_lines)
 
 
-def validate_indent_html(fn):
-    # type: (str) -> int
-    file = open(fn)
-    html = file.read()
+def validate_indent_html(fn, fix):
+    # type: (str, bool) -> int
+    with open(fn, 'r') as f:
+        html = f.read()
     phtml = pretty_print_html(html)
-    file.close()
     if not html.split('\n') == phtml.split('\n'):
+        if fix:
+            print(GREEN + "Automatically fixing problems..." + ENDC)
+            with open(fn, 'w') as f:
+                f.write(phtml)
+            # Since we successfully fixed the issues, we exit with status 0
+            return 0
         print('Invalid Indentation detected in file: '
-              '%s\nDiff for the file against expected indented file:' % (fn), flush=True)
+              '%s\nDiff for the file against expected indented file:' % (fn,), flush=True)
         with subprocess.Popen(
                 ['diff', fn, '-'],
                 stdin=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True) as p:
             p.communicate(phtml)
+        print()
+        print("This problem can be fixed with the `--fix` option.")
         return 0
     return 1

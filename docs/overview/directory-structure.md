@@ -4,7 +4,7 @@ This page documents the Zulip directory structure, where to find
 things, and how to decide where to put a file.
 
 You may also find the [new application feature
-tutorial](../tutorials/new-feature-tutorial.html) helpful for understanding the
+tutorial](../tutorials/new-feature-tutorial.md) helpful for understanding the
 flow through these files.
 
 ### Core Python files
@@ -30,11 +30,11 @@ paths will be familiar to Django developers.
 
 * `zerver/tornado/views.py` Tornado views.
 
-* `zerver/worker/queue_processors.py` [Queue workers](../subsystems/queuing.html).
+* `zerver/worker/queue_processors.py` [Queue workers](../subsystems/queuing.md).
 
 * `zerver/lib/*.py` Most library code.
 
-* `zerver/lib/bugdown/` [Backend Markdown processor](../subsystems/markdown.html).
+* `zerver/lib/bugdown/` [Backend Markdown processor](../subsystems/markdown.md).
 
 * `zproject/backends.py` [Authentication backends](https://docs.djangoproject.com/en/1.8/topics/auth/customizing/).
 
@@ -42,7 +42,7 @@ paths will be familiar to Django developers.
 
 ### HTML Templates
 
-See [our docs](../subsystems/html-templates.html) for details on Zulip's
+See [our docs](../subsystems/html-css.md) for details on Zulip's
 templating systems.
 
 * `templates/zerver/` For [Jinja2](http://jinja.pocoo.org/) templates
@@ -52,9 +52,9 @@ templating systems.
 
 ----------------------------------------
 
-### JavaScript and other static assets
+### JavaScript, TypeScript, and other static assets
 
-* `static/js/` Zulip's own JavaScript.
+* `static/js/` Zulip's own JavaScript and TypeScript sources.
 
 * `static/styles/` Zulip's own CSS.
 
@@ -87,7 +87,7 @@ These are distinguished from scripts, below, by needing to run a
 Django context (i.e. with database access).
 
 * `zerver/management/commands/`
-  [Management commands](../subsystems/management-commands.html) one might run at a
+  [Management commands](../subsystems/management-commands.md) one might run at a
   production deployment site (e.g. scripts to change a value or
   deactivate a user properly).
 
@@ -160,18 +160,11 @@ This is used to deploy essentially all configuration in production.
 
 * `zproject/jinja2/__init__.py` Jinja2 environment.
 
-* `zproject/jinja2/backends.py` Jinja2 backend.
-
-* `zproject/jinja2/compressors.py` Jinja2 compatible functions of
-   Django-Pipeline.
-
 -----------------------------------------------------------------------
 
 ### Translation files
 
-* `locale/` Backend (Django) translations data files.
-
-* `static/locale/` Frontend translations data files.
+* `locale/` Backend (Django) and frontend translation data files.
 
 -----------------------------------------------------------------------
 

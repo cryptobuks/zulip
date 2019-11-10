@@ -1,12 +1,13 @@
-import re
 import time
 from typing import List
 
+from bs4 import BeautifulSoup
 from django.test import override_settings
 from unittest.mock import Mock, patch
+from zerver.lib.realm_icon import get_realm_icon_url
 from zerver.lib.test_classes import ZulipTestCase
-from zerver.middleware import is_slow_query
-from zerver.middleware import write_log_line
+from zerver.middleware import is_slow_query, write_log_line
+from zerver.models import get_realm
 
 class SlowQueryTest(ZulipTestCase):
     SLOW_QUERY_TIME = 10
@@ -55,27 +56,20 @@ class SlowQueryTest(ZulipTestCase):
 class OpenGraphTest(ZulipTestCase):
     def check_title_and_description(self, path: str, title: str,
                                     in_description: List[str],
-                                    not_in_description: List[str]) -> None:
+                                    not_in_description: List[str],
+                                    status_code: int=200) -> None:
         response = self.client_get(path)
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, status_code)
         decoded = response.content.decode('utf-8')
-        for title_string in [
-                '<meta property="og:title" content="{}">'.format(title),
-                '<meta property="twitter:title" content="{}">'.format(title)]:
-            self.assertIn(title_string, decoded)
+        bs = BeautifulSoup(decoded, features='lxml')
+        open_graph_title = bs.select_one('meta[property="og:title"]').get('content')
+        self.assertEqual(open_graph_title, title)
 
-        open_graph_description = re.search(  # type: ignore
-            r'<meta property="og:description" content="(?P<description>[^>]*)">',
-            decoded).group('description')
-        twitter_description = re.search(  # type: ignore
-            r'<meta name="twitter:description" content="(?P<description>[^>]*)">',
-            decoded).group('description')
+        open_graph_description = bs.select_one('meta[property="og:description"]').get('content')
         for substring in in_description:
             self.assertIn(substring, open_graph_description)
-            self.assertIn(substring, twitter_description)
         for substring in not_in_description:
             self.assertNotIn(substring, open_graph_description)
-            self.assertNotIn(substring, twitter_description)
 
     def test_admonition_and_link(self) -> None:
         # disable-message-edit-history starts with an {!admin-only.md!}, and has a link
@@ -84,10 +78,20 @@ class OpenGraphTest(ZulipTestCase):
             '/help/disable-message-edit-history',
             "Disable message edit history (Zulip Help Center)",
             ["By default, Zulip displays messages",
-             "users can view the edit history of a message. To remove the",
+             "users can view the edit history of a message. | To remove the",
              "best to delete the message entirely. "],
             ["Disable message edit history", "feature is only available", "Related articles",
              "Restrict message editing"]
+        )
+
+    def test_double_quotes(self) -> None:
+        # night-mode has a quoted string "night mode"
+        self.check_title_and_description(
+            '/help/night-mode',
+            "Night mode (Zulip Help Center)",
+            ['By default, Zulip has a white background. ',
+             'Zulip also provides a "night mode", which is great for working in a dark space.'],
+            []
         )
 
     def test_settings_tab(self) -> None:
@@ -95,7 +99,7 @@ class OpenGraphTest(ZulipTestCase):
         self.check_title_and_description(
             '/help/deactivate-your-account',
             "Deactivate your account (Zulip Help Center)",
-            ["Any bots that you maintain will be disabled. Deactivating "],
+            ["Any bots that you maintain will be disabled. | Deactivating "],
             ["Confirm by clicking", "  ", "\n"])
 
     def test_tabs(self) -> None:
@@ -122,12 +126,78 @@ class OpenGraphTest(ZulipTestCase):
               "guide should help you find the API you need:")], [])
 
     def test_nonexistent_page(self) -> None:
-        response = self.client_get('/help/not-a-real-page')
-        # Test that our open graph logic doesn't throw a 500
-        self.assertEqual(response.status_code, 404)
-        self.assert_in_response(
+        self.check_title_and_description(
+            '/help/not-a-real-page',
             # Probably we should make this "Zulip Help Center"
-            '<meta property="og:title" content="No such article. (Zulip Help Center)">', response)
-        self.assert_in_response('<meta property="og:description" content="No such article. '
-                                'We\'re here to help! Email us at zulip-admin@example.com with questions, '
-                                'feedback, or feature requests.">', response)
+            "No such article. (Zulip Help Center)",
+            ["No such article. | We're here to help!",
+             "Email us at zulip-admin@example.com with questions, feedback, or feature requests."],
+            [],
+            # Test that our open graph logic doesn't throw a 500
+            404)
+
+    def test_login_page_simple_description(self) -> None:
+        name = 'Zulip Dev'
+        description = "The Zulip development environment default organization. It's great for testing!"
+
+        self.check_title_and_description(
+            '/login/',
+            name,
+            [description],
+            [])
+
+    def test_login_page_markdown_description(self) -> None:
+        realm = get_realm('zulip')
+        description = ("Welcome to **Clojurians Zulip** - the place where the Clojure community meets.\n\n"
+                       "Before you signup/login:\n\n"
+                       "* note-1\n"
+                       "* note-2\n"
+                       "* note-3\n\n"
+                       "Enjoy!")
+        realm.description = description
+        realm.save(update_fields=['description'])
+
+        self.check_title_and_description(
+            '/login/',
+            'Zulip Dev',
+            ['Welcome to Clojurians Zulip - the place where the Clojure community meets',
+             '* note-1 * note-2 * note-3 | Enjoy!'],
+            [])
+
+    def test_login_page_realm_icon(self) -> None:
+        realm = get_realm('zulip')
+        realm.icon_source = 'U'
+        realm.save(update_fields=['icon_source'])
+        realm_icon = get_realm_icon_url(realm)
+
+        response = self.client_get('/login/')
+        self.assertEqual(response.status_code, 200)
+
+        decoded = response.content.decode('utf-8')
+        bs = BeautifulSoup(decoded, features='lxml')
+        open_graph_image = bs.select_one('meta[property="og:image"]').get('content')
+        self.assertEqual(open_graph_image, '%s%s' % (realm.uri, realm_icon))
+
+    def test_login_page_realm_icon_absolute_url(self) -> None:
+        realm = get_realm('zulip')
+        realm.icon_source = 'U'
+        realm.save(update_fields=['icon_source'])
+        icon_url = "https://foo.s3.amazonaws.com/%s/realm/icon.png?version=%s" % (realm.id, 1)
+        with patch('zerver.lib.realm_icon.upload_backend.get_realm_icon_url', return_value=icon_url):
+            response = self.client_get('/login/')
+        self.assertEqual(response.status_code, 200)
+
+        decoded = response.content.decode('utf-8')
+        bs = BeautifulSoup(decoded, features='lxml')
+        open_graph_image = bs.select_one('meta[property="og:image"]').get('content')
+        self.assertEqual(open_graph_image, icon_url)
+
+    def test_no_realm_api_page_og_url(self) -> None:
+        response = self.client_get('/api/', subdomain='')
+        self.assertEqual(response.status_code, 200)
+
+        decoded = response.content.decode('utf-8')
+        bs = BeautifulSoup(decoded, features='lxml')
+        open_graph_url = bs.select_one('meta[property="og:url"]').get('content')
+
+        self.assertTrue(open_graph_url.endswith('/api/'))

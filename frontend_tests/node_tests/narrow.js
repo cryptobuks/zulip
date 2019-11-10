@@ -20,19 +20,19 @@ function set_filter(operators) {
     narrow_state.set_current_filter(new Filter(operators));
 }
 
-var me = {
+const me = {
     email: 'me@example.com',
     user_id: 5,
     full_name: 'Me Myself',
 };
 
-var alice = {
+const alice = {
     email: 'alice@example.com',
     user_id: 23,
     full_name: 'Alice Smith',
 };
 
-var ray = {
+const ray = {
     email: 'ray@example.com',
     user_id: 22,
     full_name: 'Raymond',
@@ -46,7 +46,7 @@ run_test('stream_topic', () => {
 
     global.current_msg_list.selected_message = function () {};
 
-    var stream_topic = narrow.stream_topic();
+    let stream_topic = narrow.stream_topic();
 
     assert.deepEqual(stream_topic, {
         stream: 'Foo',
@@ -75,7 +75,7 @@ run_test('uris', () => {
     people.add(me);
     people.initialize_current_user(me.user_id);
 
-    var uri = hash_util.pm_with_uri(ray.email);
+    let uri = hash_util.pm_with_uri(ray.email);
     assert.equal(uri, '#narrow/pm-with/22-ray');
 
     uri = hash_util.huddle_with_uri("22,23");
@@ -84,7 +84,7 @@ run_test('uris', () => {
     uri = hash_util.by_sender_uri(ray.email);
     assert.equal(uri, '#narrow/sender/22-ray');
 
-    var emails = global.hash_util.decode_operand('pm-with', '22,23-group');
+    let emails = global.hash_util.decode_operand('pm-with', '22,23-group');
     assert.equal(emails, 'alice@example.com,ray@example.com');
 
     emails = global.hash_util.decode_operand('pm-with', '5,22,23-group');
@@ -157,9 +157,9 @@ run_test('show_empty_narrow_message', () => {
     narrow.show_empty_narrow_message();
     assert($('#non_existing_user').visible());
 
-    var display = $("#empty_search_stop_words_string");
+    const display = $("#empty_search_stop_words_string");
 
-    var items = [];
+    const items = [];
     display.append = (html) => {
         items.push(html);
     };
@@ -171,8 +171,14 @@ run_test('show_empty_narrow_message', () => {
     assert.equal(items.length, 2);
     assert.equal(items[0], ' ');
     assert.equal(items[1].text(), 'grail');
+});
 
-    items = [];
+run_test('show_search_stopwords', () => {
+    narrow_state.reset_current_filter();
+    let items = [];
+
+    const display = $("#empty_search_stop_words_string");
+
     display.append = (html) => {
         if (html.text) {
             items.push(html.selector + html.text());
@@ -187,6 +193,54 @@ run_test('show_empty_narrow_message', () => {
     assert.equal(items[0], '<del>what');
     assert.equal(items[1], '<del>about');
     assert.equal(items[2], '<span>grail');
+
+    items = [];
+    set_filter([['stream', 'streamA'], ['search', 'what about grail']]);
+    narrow.show_empty_narrow_message();
+    assert($('#empty_search_narrow_message').visible());
+
+    assert.equal(items.length, 4);
+    assert.equal(items[0], '<span>stream: streamA');
+    assert.equal(items[1], '<del>what');
+    assert.equal(items[2], '<del>about');
+    assert.equal(items[3], '<span>grail');
+
+    items = [];
+    set_filter([['stream', 'streamA'], ['topic', 'topicA'], ['search', 'what about grail']]);
+    narrow.show_empty_narrow_message();
+    assert($('#empty_search_narrow_message').visible());
+
+    assert.equal(items.length, 4);
+    assert.equal(items[0], '<span>stream: streamA topic: topicA');
+    assert.equal(items[1], '<del>what');
+    assert.equal(items[2], '<del>about');
+    assert.equal(items[3], '<span>grail');
+});
+
+run_test('show_invalid_narrow_message', () => {
+    narrow_state.reset_current_filter();
+    const display = $("#empty_search_stop_words_string");
+
+    stream_data.add_sub('streamA', {name: 'streamA', stream_id: 88});
+    stream_data.add_sub('streamB', {name: 'streamB', stream_id: 77});
+
+    set_filter([['stream', 'streamA'], ['stream', 'streamB']]);
+    narrow.show_empty_narrow_message();
+    assert($('#empty_search_narrow_message').visible());
+    assert.equal(display.text(), 'translated: You are searching for messages that belong to more than one stream, which is not possible.');
+
+    set_filter([['topic', 'topicA'], ['topic', 'topicB']]);
+    narrow.show_empty_narrow_message();
+    assert($('#empty_search_narrow_message').visible());
+    assert.equal(display.text(), 'translated: You are searching for messages that belong to more than one topic, which is not possible.');
+
+    people.add_in_realm(ray);
+    people.add_in_realm(alice);
+
+    set_filter([['sender', 'alice@example.com'], ['sender', 'ray@example.com']]);
+    narrow.show_empty_narrow_message();
+    assert($('#empty_search_narrow_message').visible());
+    assert.equal(display.text(), 'translated: You are searching for messages that are sent by more than one person, which is not possible.');
 });
 
 run_test('narrow_to_compose_target', () => {

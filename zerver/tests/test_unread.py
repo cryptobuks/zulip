@@ -205,6 +205,7 @@ class PointerTest(ZulipTestCase):
 
 class UnreadCountTests(ZulipTestCase):
     def setUp(self) -> None:
+        super().setUp()
         with mock.patch('zerver.lib.push_notifications.push_notifications_enabled',
                         return_value = True) as mock_push_notifications_enabled:
             self.unread_msg_ids = [
@@ -388,7 +389,7 @@ class FixUnreadTests(ZulipTestCase):
                 user_profile=user,
                 recipient=recipient
             )
-            subscription.in_home_view = False
+            subscription.is_muted = True
             subscription.save()
 
         def mute_topic(stream_name: str, topic_name: str) -> None:

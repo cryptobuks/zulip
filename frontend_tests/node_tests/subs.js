@@ -1,10 +1,13 @@
 global.stub_out_jquery();
 
-set_global('templates', {});
-set_global('ui', {});
+set_global('ui', {
+    get_content_element: element => element,
+    get_scroll_element: element => element,
+});
 zrequire('util');
 zrequire('stream_data');
 zrequire('search_util');
+set_global('page_params', {});
 
 global.patch_builtin('window', {
     location: {
@@ -19,9 +22,9 @@ set_global('$', global.make_zjquery());
 stream_data.update_calculated_fields = () => {};
 
 run_test('filter_table', () => {
-    var stream_list = $(".streams-list");
+    const stream_list = $(".streams-list");
 
-    var scrolltop_called = false;
+    let scrolltop_called = false;
     stream_list.scrollTop = function (set) {
         scrolltop_called = true;
         if (!set) {
@@ -31,7 +34,7 @@ run_test('filter_table', () => {
     };
 
     // set-up sub rows stubs
-    var sub_row_data = {};
+    const sub_row_data = {};
     sub_row_data[1] = {
         elem: 'denmark',
         subscribed: false,
@@ -65,18 +68,18 @@ run_test('filter_table', () => {
         stream_data.add_sub(sub.name, sub);
     });
 
-    var populated_subs;
+    let populated_subs;
 
-    templates.render = (fn, data) => {
+    global.stub_templates((fn, data) => {
         assert.equal(fn, 'subscriptions');
         populated_subs = data.subscriptions;
-    };
+    });
 
     subs.populate_stream_settings_left_panel();
 
-    var sub_stubs = [];
+    const sub_stubs = [];
     _.each(populated_subs, function (data) {
-        var sub_row = ".stream-row-" + data.elem;
+        const sub_row = ".stream-row-" + data.elem;
         sub_stubs.push(sub_row);
 
         $(sub_row).attr("data-stream-id", data.stream_id);
@@ -86,7 +89,7 @@ run_test('filter_table', () => {
         };
     });
 
-    var tooltip_called = false;
+    let tooltip_called = false;
     $(".tooltip").tooltip = function (obj) {
         tooltip_called = true;
         assert.deepEqual(obj, {
@@ -97,13 +100,13 @@ run_test('filter_table', () => {
 
     $.stub_selector("#subscriptions_table .stream-row", sub_stubs);
 
-    var sub_table = $('#subscriptions_table .streams-list');
-    var sub_table_append = [];
+    const sub_table = $('#subscriptions_table .streams-list');
+    let sub_table_append = [];
     sub_table.append = function (rows) {
         sub_table_append.push(rows);
     };
 
-    var ui_called = false;
+    let ui_called = false;
     ui.reset_scrollbar = function (elem) {
         ui_called = true;
         assert.equal(elem, $("#subscription_overlay .streams-list"));

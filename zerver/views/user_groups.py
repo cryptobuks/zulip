@@ -3,7 +3,7 @@ from django.utils.translation import ugettext as _
 
 from typing import List
 
-from zerver.decorator import require_non_guest_human_user
+from zerver.decorator import require_member_or_admin, require_user_group_edit_policy
 from zerver.lib.actions import check_add_user_group, do_update_user_group_name, \
     do_update_user_group_description, bulk_add_members_to_user_group, \
     remove_members_from_user_group, check_delete_user_group
@@ -17,7 +17,8 @@ from zerver.lib.user_groups import access_user_group_by_id, get_memberships_of_u
 from zerver.models import UserProfile
 from zerver.views.streams import compose_views, FuncKwargPair
 
-@require_non_guest_human_user
+@require_member_or_admin
+@require_user_group_edit_policy
 @has_request_variables
 def add_user_group(request: HttpRequest, user_profile: UserProfile,
                    name: str=REQ(),
@@ -27,13 +28,14 @@ def add_user_group(request: HttpRequest, user_profile: UserProfile,
     check_add_user_group(user_profile.realm, name, user_profiles, description)
     return json_success()
 
-@require_non_guest_human_user
+@require_member_or_admin
 @has_request_variables
 def get_user_group(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:
     user_groups = user_groups_in_realm_serialized(user_profile.realm)
     return json_success({"user_groups": user_groups})
 
-@require_non_guest_human_user
+@require_member_or_admin
+@require_user_group_edit_policy
 @has_request_variables
 def edit_user_group(request: HttpRequest, user_profile: UserProfile,
                     user_group_id: int=REQ(validator=check_int),
@@ -44,18 +46,16 @@ def edit_user_group(request: HttpRequest, user_profile: UserProfile,
 
     user_group = access_user_group_by_id(user_group_id, user_profile)
 
-    result = {}
     if name != user_group.name:
         do_update_user_group_name(user_group, name)
-        result['name'] = _("Name successfully updated.")
 
     if description != user_group.description:
         do_update_user_group_description(user_group, description)
-        result['description'] = _("Description successfully updated.")
 
-    return json_success(result)
+    return json_success()
 
-@require_non_guest_human_user
+@require_member_or_admin
+@require_user_group_edit_policy
 @has_request_variables
 def delete_user_group(request: HttpRequest, user_profile: UserProfile,
                       user_group_id: int=REQ(validator=check_int)) -> HttpResponse:
@@ -63,7 +63,8 @@ def delete_user_group(request: HttpRequest, user_profile: UserProfile,
     check_delete_user_group(user_group_id, user_profile)
     return json_success()
 
-@require_non_guest_human_user
+@require_member_or_admin
+@require_user_group_edit_policy
 @has_request_variables
 def update_user_group_backend(request: HttpRequest, user_profile: UserProfile,
                               user_group_id: int=REQ(validator=check_int),
@@ -92,7 +93,7 @@ def add_members_to_group_backend(request: HttpRequest, user_profile: UserProfile
 
     for user_profile in user_profiles:
         if user_profile.id in existing_member_ids:
-            raise JsonableError(_("User %s is already a member of this group" % (user_profile.id,)))
+            raise JsonableError(_("User %s is already a member of this group") % (user_profile.id,))
 
     bulk_add_members_to_user_group(user_group, user_profiles)
     return json_success()
@@ -107,7 +108,7 @@ def remove_members_from_group_backend(request: HttpRequest, user_profile: UserPr
     group_member_ids = get_user_group_members(user_group)
     for member in members:
         if (member not in group_member_ids):
-            raise JsonableError(_("There is no member '%s' in this user group" % (member,)))
+            raise JsonableError(_("There is no member '%s' in this user group") % (member,))
 
     remove_members_from_user_group(user_group, user_profiles)
     return json_success()

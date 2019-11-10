@@ -1,7 +1,3 @@
-var buddy_data = (function () {
-
-var exports = {};
-
 /*
 
    This is the main model code for building the buddy list.
@@ -153,7 +149,7 @@ exports.my_user_status = function (user_id) {
 exports.user_last_seen_time_status = function (user_id) {
     var status = presence.get_status(user_id);
     if (status === "active") {
-        return i18n.t("Online now");
+        return i18n.t("Active now");
     }
 
     if (page_params.realm_is_zephyr_mirror_realm) {
@@ -307,10 +303,4 @@ exports.huddle_fraction_present = function (huddle) {
     return false;
 };
 
-return exports;
-
-}());
-if (typeof module !== 'undefined') {
-    module.exports = buddy_data;
-}
-window.buddy_data = buddy_data;
+window.buddy_data = exports;

@@ -13,7 +13,8 @@ user, or anything else. Make sure to read the
 before posting. The Zulip community is also governed by a
 [code of conduct](https://zulip.readthedocs.io/en/latest/code-of-conduct.html).
 
-You can subscribe to zulip-devel@googlegroups.com for a lower traffic (~1
+You can subscribe to zulip-devel-announce@googlegroups.com or our
+[Twitter](https://twitter.com/zulip) account for a lower traffic (~1
 email/month) way to hear about things like mentorship opportunities with Google
 Code-in, in-person sprints at conferences, and other opportunities to
 contribute.
@@ -28,7 +29,7 @@ needs doing:
   [backend](https://github.com/zulip/zulip), web
   [frontend](https://github.com/zulip/zulip), React Native
   [mobile app](https://github.com/zulip/zulip-mobile), or Electron
-  [desktop app](https://github.com/zulip/zulip-electron).
+  [desktop app](https://github.com/zulip/zulip-desktop).
 * Building out our
   [Python API and bots](https://github.com/zulip/python-zulip-api) framework.
 * [Writing an integration](https://zulipchat.com/api/integrations-overview).
@@ -85,7 +86,7 @@ on.
 
 * If you're interested in
   [mobile](https://github.com/zulip/zulip-mobile/issues?q=is%3Aopen+is%3Aissue),
-  [desktop](https://github.com/zulip/zulip-electron/issues?q=is%3Aopen+is%3Aissue),
+  [desktop](https://github.com/zulip/zulip-desktop/issues?q=is%3Aopen+is%3Aissue),
   or
   [bots](https://github.com/zulip/python-zulip-api/issues?q=is%3Aopen+is%3Aissue)
   development, check the respective links for open issues, or post in
@@ -107,8 +108,8 @@ on.
   [#new members](https://chat.zulip.org/#narrow/stream/95-new-members) with a
   bit about your background and interests, and we'll help you out. The most
   important thing to say is whether you're looking for a backend (Python),
-  frontend (JavaScript), mobile (React Native), desktop (Electron),
-  documentation (English) or visual design (JavaScript + CSS) issue, and a
+  frontend (JavaScript and TypeScript), mobile (React Native), desktop (Electron),
+  documentation (English) or visual design (JavaScript/TypeScript + CSS) issue, and a
   bit about your programming experience and available time.
 
 We also welcome suggestions of features that you feel would be valuable or
@@ -277,10 +278,10 @@ quickly become core team members. We hope you apply!
 
 ### Google Summer of Code
 
-GSoC is by far the largest of our internship programs (we had 14 GSoC
-students in summer 2017).  While we don't control how many slots
+GSoC is by far the largest of our internship programs (14 students in
+2017; 11 in 2018; 17 in 2019).  While we don't control how many slots
 Google allocates to Zulip, we hope to mentor a similar number of
-students in 2018.
+students in future summers.
 
 If you're reading this well before the application deadline and want
 to make your application strong, we recommend getting involved in the
@@ -318,7 +319,7 @@ list typically takes about 15 minutes.
 * Star us on GitHub. There are four main repositories:
   [server/web](https://github.com/zulip/zulip),
   [mobile](https://github.com/zulip/zulip-mobile),
-  [desktop](https://github.com/zulip/zulip-electron), and
+  [desktop](https://github.com/zulip/zulip-desktop), and
   [Python API](https://github.com/zulip/python-zulip-api).
 * [Follow us](https://twitter.com/zulip) on Twitter.
 

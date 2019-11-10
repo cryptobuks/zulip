@@ -3,7 +3,7 @@ set_global('page_params', {
 });
 zrequire('util');
 zrequire('typeahead_helper');
-zrequire('Handlebars', 'handlebars');
+set_global('Handlebars', global.make_handlebars());
 zrequire('Filter', 'js/filter');
 zrequire('narrow_state');
 zrequire('stream_data');
@@ -11,9 +11,9 @@ zrequire('topic_data');
 zrequire('people');
 zrequire('unread');
 zrequire('common');
-var search = zrequire('search_suggestion');
+const search = zrequire('search_suggestion');
 
-var bob = {
+const bob = {
     email: 'bob@zulip.com',
     full_name: 'Bob Roberts',
     user_id: 42,
@@ -28,11 +28,14 @@ function init() {
 init();
 
 set_global('narrow', {});
+set_global('settings_org', {
+    show_email: () => true,
+});
 
 topic_data.reset();
 
 run_test('basic_get_suggestions', () => {
-    var query = 'fred';
+    const query = 'fred';
 
     global.stream_data.subscribed_streams = function () {
         return [];
@@ -42,16 +45,16 @@ run_test('basic_get_suggestions', () => {
         return 'office';
     };
 
-    var suggestions = search.get_suggestions_legacy(query);
+    const suggestions = search.get_suggestions_legacy(query);
 
-    var expected = [
+    const expected = [
         'fred',
     ];
     assert.deepEqual(suggestions.strings, expected);
 });
 
 run_test('subset_suggestions', () => {
-    var query = 'stream:Denmark topic:Hamlet shakespeare';
+    const query = 'stream:Denmark topic:Hamlet shakespeare';
 
     global.stream_data.subscribed_streams = function () {
         return [];
@@ -61,9 +64,9 @@ run_test('subset_suggestions', () => {
         return;
     };
 
-    var suggestions = search.get_suggestions_legacy(query);
+    const suggestions = search.get_suggestions_legacy(query);
 
-    var expected = [
+    const expected = [
         "stream:Denmark topic:Hamlet shakespeare",
         "stream:Denmark topic:Hamlet",
         "stream:Denmark",
@@ -81,14 +84,14 @@ run_test('private_suggestions', () => {
         return;
     };
 
-    var ted =
+    const ted =
     {
         email: 'ted@zulip.com',
         user_id: 101,
         full_name: 'Ted Smith',
     };
 
-    var alice =
+    const alice =
     {
         email: 'alice@zulip.com',
         user_id: 102,
@@ -98,9 +101,9 @@ run_test('private_suggestions', () => {
     people.add(ted);
     people.add(alice);
 
-    var query = 'is:private';
-    var suggestions = search.get_suggestions_legacy(query);
-    var expected = [
+    let query = 'is:private';
+    let suggestions = search.get_suggestions_legacy(query);
+    let expected = [
         "is:private",
         "pm-with:alice@zulip.com",
         "pm-with:bob@zulip.com",
@@ -258,21 +261,21 @@ run_test('group_suggestions', () => {
         },
     });
 
-    var ted =
+    const ted =
     {
         email: 'ted@zulip.com',
         user_id: 101,
         full_name: 'Ted Smith',
     };
 
-    var alice =
+    const alice =
     {
         email: 'alice@zulip.com',
         user_id: 102,
         full_name: 'Alice Ignore',
     };
 
-    var jeff =
+    const jeff =
     {
         email: 'jeff@zulip.com',
         user_id: 103,
@@ -285,9 +288,9 @@ run_test('group_suggestions', () => {
 
     // Entering a comma in a pm-with query should immediately generate
     // suggestions for the next person.
-    var query = 'pm-with:bob@zulip.com,';
-    var suggestions = search.get_suggestions_legacy(query);
-    var expected = [
+    let query = 'pm-with:bob@zulip.com,';
+    let suggestions = search.get_suggestions_legacy(query);
+    let expected = [
         "pm-with:bob@zulip.com,",
         "pm-with:bob@zulip.com,alice@zulip.com",
         "pm-with:bob@zulip.com,jeff@zulip.com",
@@ -423,12 +426,21 @@ run_test('group_suggestions', () => {
         "pm-with:jeff@zulip.com,ted@zulip.com",
     ];
     assert.deepEqual(suggestions.strings, expected);
+
+    query = "pm-with:jeff@zulip.com,ted@zulip.com hi";
+    suggestions = search.get_suggestions_legacy(query);
+    expected = [
+        "pm-with:jeff@zulip.com,ted@zulip.com hi",
+        "pm-with:jeff@zulip.com,ted@zulip.com",
+    ];
+    assert.deepEqual(suggestions.strings, expected);
+
 });
 
 init();
 
 run_test('empty_query_suggestions', () => {
-    var query = '';
+    const query = '';
 
     global.stream_data.subscribed_streams = function () {
         return ['devel', 'office'];
@@ -438,10 +450,11 @@ run_test('empty_query_suggestions', () => {
         return;
     };
 
-    var suggestions = search.get_suggestions_legacy(query);
+    const suggestions = search.get_suggestions_legacy(query);
 
-    var expected = [
+    const expected = [
         "",
+        "streams:public",
         "is:private",
         "is:starred",
         "is:mentioned",
@@ -474,7 +487,7 @@ run_test('empty_query_suggestions', () => {
 run_test('has_suggestions', () => {
     // Checks that category wise suggestions are displayed instead of a single
     // default suggestion when suggesting `has` operator.
-    var query = 'h';
+    let query = 'h';
     global.stream_data.subscribed_streams = function () {
         return ['devel', 'office'];
     };
@@ -482,8 +495,8 @@ run_test('has_suggestions', () => {
         return;
     };
 
-    var suggestions = search.get_suggestions_legacy(query);
-    var expected = [
+    let suggestions = search.get_suggestions_legacy(query);
+    let expected = [
         "h",
         'has:link',
         'has:image',
@@ -556,7 +569,7 @@ run_test('has_suggestions', () => {
 });
 
 run_test('check_is_suggestions', () => {
-    var query = 'i';
+    let query = 'i';
     global.stream_data.subscribed_streams = function () {
         return ['devel', 'office'];
     };
@@ -564,8 +577,8 @@ run_test('check_is_suggestions', () => {
         return;
     };
 
-    var suggestions = search.get_suggestions_legacy(query);
-    var expected = [
+    let suggestions = search.get_suggestions_legacy(query);
+    let expected = [
         'i',
         'is:private',
         'is:starred',
@@ -635,6 +648,7 @@ run_test('check_is_suggestions', () => {
     suggestions = search.get_suggestions_legacy(query);
     expected = [
         'st',
+        'streams:public',
         'is:starred',
         'stream:',
     ];
@@ -659,15 +673,15 @@ run_test('sent_by_me_suggestions', () => {
         return;
     };
 
-    var query = '';
-    var suggestions = search.get_suggestions_legacy(query);
+    let query = '';
+    let suggestions = search.get_suggestions_legacy(query);
     assert(suggestions.strings.indexOf('sender:bob@zulip.com') !== -1);
     assert.equal(suggestions.lookup_table['sender:bob@zulip.com'].description,
                  'Sent by me');
 
     query = 'sender';
     suggestions = search.get_suggestions_legacy(query);
-    var expected = [
+    let expected = [
         "sender",
         "sender:bob@zulip.com",
         "sender:",
@@ -760,8 +774,8 @@ run_test('sent_by_me_suggestions', () => {
 });
 
 run_test('topic_suggestions', () => {
-    var suggestions;
-    var expected;
+    let suggestions;
+    let expected;
 
     global.stream_data.subscribed_streams = function () {
         return ['office'];
@@ -771,8 +785,8 @@ run_test('topic_suggestions', () => {
         return 'office';
     };
 
-    var devel_id = 44;
-    var office_id = 77;
+    const devel_id = 44;
+    const office_id = 77;
 
     global.stream_data.get_stream_id = function (stream_name) {
         switch (stream_name) {
@@ -873,7 +887,7 @@ run_test('topic_suggestions', () => {
 });
 
 run_test('whitespace_glitch', () => {
-    var query = 'stream:office '; // note trailing space
+    const query = 'stream:office '; // note trailing space
 
     global.stream_data.subscribed_streams = function () {
         return ['office'];
@@ -885,9 +899,9 @@ run_test('whitespace_glitch', () => {
 
     topic_data.reset();
 
-    var suggestions = search.get_suggestions_legacy(query);
+    const suggestions = search.get_suggestions_legacy(query);
 
-    var expected = [
+    const expected = [
         "stream:office",
     ];
 
@@ -905,9 +919,9 @@ run_test('stream_completion', () => {
 
     topic_data.reset();
 
-    var query = 'stream:of';
-    var suggestions = search.get_suggestions_legacy(query);
-    var expected = [
+    let query = 'stream:of';
+    let suggestions = search.get_suggestions_legacy(query);
+    let expected = [
         "stream:of",
         "stream:office",
     ];
@@ -931,7 +945,7 @@ run_test('stream_completion', () => {
 });
 
 run_test('people_suggestions', () => {
-    var query = 'te';
+    let query = 'te';
 
     global.stream_data.subscribed_streams = function () {
         return [];
@@ -941,19 +955,19 @@ run_test('people_suggestions', () => {
         return;
     };
 
-    var ted = {
+    const ted = {
         email: 'ted@zulip.com',
         user_id: 201,
         full_name: 'Ted Smith',
     };
 
-    var bob = {
+    const bob = {
         email: 'bob@zulip.com',
         user_id: 202,
         full_name: 'Bob Térry',
     };
 
-    var alice = {
+    const alice = {
         email: 'alice@zulip.com',
         user_id: 203,
         full_name: 'Alice Ignore',
@@ -965,9 +979,9 @@ run_test('people_suggestions', () => {
 
     topic_data.reset();
 
-    var suggestions = search.get_suggestions_legacy(query);
+    let suggestions = search.get_suggestions_legacy(query);
 
-    var expected = [
+    let expected = [
         "te",
         "sender:bob@zulip.com",
         "sender:ted@zulip.com",
@@ -1023,9 +1037,9 @@ run_test('people_suggestions', () => {
 
 run_test('operator_suggestions', () => {
     // Completed operator should return nothing
-    var query = 'stream:';
-    var suggestions = search.get_suggestions_legacy(query);
-    var expected = [
+    let query = 'stream:';
+    let suggestions = search.get_suggestions_legacy(query);
+    let expected = [
         'stream:',
     ];
     assert.deepEqual(suggestions.strings, expected);
@@ -1034,6 +1048,7 @@ run_test('operator_suggestions', () => {
     suggestions = search.get_suggestions_legacy(query);
     expected = [
         'st',
+        'streams:public',
         'is:starred',
         'stream:',
     ];
@@ -1051,6 +1066,7 @@ run_test('operator_suggestions', () => {
     suggestions = search.get_suggestions_legacy(query);
     expected = [
         '-s',
+        '-streams:public',
         '-sender:bob@zulip.com',
         '-stream:',
         '-sender:',
@@ -1081,9 +1097,9 @@ run_test('queries_with_spaces', () => {
     topic_data.reset();
 
     // test allowing spaces with quotes surrounding operand
-    var query = 'stream:"dev he"';
-    var suggestions = search.get_suggestions_legacy(query);
-    var expected = [
+    let query = 'stream:"dev he"';
+    let suggestions = search.get_suggestions_legacy(query);
+    let expected = [
         "stream:dev+he",
         "stream:dev+help",
     ];

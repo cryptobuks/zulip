@@ -10,7 +10,7 @@ import random
 import re
 
 from zerver.lib.integrations import CATEGORIES, INTEGRATIONS, HubotIntegration, \
-    WebhookIntegration, EmailIntegration
+    WebhookIntegration
 from zerver.lib.request import has_request_variables, REQ
 from zerver.lib.subdomains import get_subdomain
 from zerver.models import Realm
@@ -32,10 +32,12 @@ def add_api_uri_context(context: Dict[str, Any], request: HttpRequest) -> None:
     display_host = Realm.host_for_subdomain(display_subdomain)
     api_url_scheme_relative = display_host + "/api"
     api_url = settings.EXTERNAL_URI_SCHEME + api_url_scheme_relative
+    zulip_url = settings.EXTERNAL_URI_SCHEME + display_host
 
     context['external_uri_scheme'] = settings.EXTERNAL_URI_SCHEME
     context['api_url'] = api_url
     context['api_url_scheme_relative'] = api_url_scheme_relative
+    context['zulip_url'] = zulip_url
 
     context["html_settings_links"] = html_settings_links
     if html_settings_links:
@@ -52,9 +54,6 @@ class ApiURLView(TemplateView):
         context = super().get_context_data(**kwargs)
         add_api_uri_context(context, self.request)
         return context
-
-class APIView(ApiURLView):
-    template_name = 'zerver/api.html'
 
 
 class MarkdownDirectoryView(ApiURLView):
@@ -122,6 +121,7 @@ class MarkdownDirectoryView(ApiURLView):
         # An "article" might require the api_uri_context to be rendered
         api_uri_context = {}  # type: Dict[str, Any]
         add_api_uri_context(api_uri_context, self.request)
+        api_uri_context["run_content_validators"] = True
         context["api_uri_context"] = api_uri_context
         return context
 
@@ -143,6 +143,25 @@ def add_integrations_context(context: Dict[str, Any]) -> None:
     context['integrations_dict'] = alphabetical_sorted_integration
     context['integrations_count_display'] = integrations_count_display
 
+def add_integrations_open_graph_context(context: Dict[str, Any], request: HttpRequest) -> None:
+    path_name = request.path.rstrip('/').split('/')[-1]
+    description = ('Zulip comes with over a hundred native integrations out of the box, '
+                   'and integrates with Zapier, IFTTT, and Hubot to provide hundreds more. '
+                   'Connect the apps you use everyday to Zulip.')
+
+    if path_name in INTEGRATIONS:
+        integration = INTEGRATIONS[path_name]
+        context['OPEN_GRAPH_TITLE'] = 'Connect {name} to Zulip'.format(name=integration.display_name)
+        context['OPEN_GRAPH_DESCRIPTION'] = description
+
+    elif path_name in CATEGORIES:
+        category = CATEGORIES[path_name]
+        context['OPEN_GRAPH_TITLE'] = 'Connect your {category} tools to Zulip'.format(category=category)
+        context['OPEN_GRAPH_DESCRIPTION'] = description
+
+    elif path_name == 'integrations':
+        context['OPEN_GRAPH_TITLE'] = 'Connect the tools you use to Zulip'
+        context['OPEN_GRAPH_DESCRIPTION'] = description
 
 class IntegrationView(ApiURLView):
     template_name = 'zerver/integrations/index.html'
@@ -150,6 +169,7 @@ class IntegrationView(ApiURLView):
     def get_context_data(self, **kwargs: Any) -> Dict[str, Any]:
         context = super().get_context_data(**kwargs)  # type: Dict[str, Any]
         add_integrations_context(context)
+        add_integrations_open_graph_context(context, self.request)
         return context
 
 
@@ -173,16 +193,6 @@ def integration_doc(request: HttpRequest, integration_name: str=REQ(default=None
         context['integration_url'] = integration.url[3:]
     if isinstance(integration, HubotIntegration):
         context['hubot_docs_url'] = integration.hubot_docs_url
-    if isinstance(integration, EmailIntegration):
-        context['email_gateway_example'] = settings.EMAIL_GATEWAY_EXAMPLE
-    if integration.name == 'freshdesk':
-        # In our Freshdesk docs, some nested code blocks have characters such
-        # as '{' encoded as '&#123;' to prevent clashes with Jinja2 syntax,
-        # but the encoded form never gets rendered because the text ends up
-        # inside a <pre> tag. So here, we explicitly set a directive that
-        # a particular template should be "unescaped" before being displayed.
-        # Note that this value is used by render_markdown_path.
-        context['unescape_rendered_html'] = True
 
     doc_html_str = render_markdown_path(integration.doc, context)
 

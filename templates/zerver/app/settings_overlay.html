@@ -1,4 +1,4 @@
-<div id="settings_page" class="new-style overlay-content modal-bg rendered_markdown">
+<div id="settings_page" class="new-style overlay-content modal-bg">
     <div class="settings-header mobile">
         <i class="fa fa-chevron-left" aria-hidden="true"></i>
         <h1>{{ _('Settings') }}<span class="section"></span></h1>
@@ -7,7 +7,7 @@
         </div>
         <div class="clear-float"></div>
     </div>
-    <div class="sidebar left">
+    <div class="sidebar left" data-simplebar>
         <div class="sidebar-list dark-grey small-text">
             <div class="center tab-container"></div>
             <ul class="normal-settings-list">
@@ -33,10 +33,12 @@
                     <i class="icon fa fa-book" aria-hidden="true"></i>
                     <div class="text">{{ _('Alert words') }}</div>
                 </li>
+                {% if max_file_upload_size > 0 %}
                 <li tabindex="0" data-section="uploaded-files">
                     <i class="icon fa fa-paperclip" aria-hidden="true"></i>
                     <div class="text">{{ _('Uploaded files') }}</div>
                 </li>
+                {% endif %}
                 <li tabindex="0" data-section="muted-topics">
                     <i class="icon fa fa-eye-slash" aria-hidden="true"></i>
                     <div class="text">{{ _('Muted topics') }}</div>
@@ -51,14 +53,14 @@
                     <i class="locked fa fa-lock" title="{{ _('Only organization administrators can edit these settings.') }}"></i>
                     {% endif %}
                 </li>
-                <li tabindex="0" data-section="organization-settings">
+                <li class="collapse-org-settings {% if not is_admin %}hide-org-settings{% endif %}" tabindex="0" data-section="organization-settings">
                     <i class="icon fa fa-flask" aria-hidden="true"></i>
                     <div class="text">{{ _('Organization settings') }}</div>
                     {% if not is_admin %}
                     <i class="locked fa fa-lock" title="{{ _('Only organization administrators can edit these settings.') }}"></i>
                     {% endif %}
                 </li>
-                <li tabindex="0" data-section="organization-permissions">
+                <li class="collapse-org-settings {% if not is_admin %}hide-org-settings{% endif %}" tabindex="0" data-section="organization-permissions">
                     <i class="icon fa fa-lock" aria-hidden="true"></i>
                     <div class="text">{{ _('Organization permissions') }}</div>
                     {% if not is_admin %}
@@ -76,21 +78,20 @@
                         {% endif %}
                     {% endif %}
                 </li>
+                {% if not is_guest %}
                 <li tabindex="0" data-section="user-groups-admin">
                     <i class="icon fa fa-group" aria-hidden="true"></i>
                     <div class="text">{{ _('User groups') }}</div>
-                    {% if is_guest %}
-                    <i class="locked fa fa-lock"
-                      title="{{ _('Only group members and organization administrators can modify a group.') }}"></i>
-                    {% endif %}
                 </li>
-                <li tabindex="0" data-section="auth-methods">
+                {% endif %}
+                <li class="collapse-org-settings {% if not is_admin %}hide-org-settings{% endif %}" tabindex="0" data-section="auth-methods">
                     <i class="icon fa fa-key" aria-hidden="true"></i>
                     <div class="text">{{ _('Authentication methods') }}</div>
                     {% if not is_admin %}
                     <i class="locked fa fa-lock" title="{{ _('Only organization administrators can edit these settings.') }}"></i>
                     {% endif %}
                 </li>
+                {% if not is_guest %}
                 <li tabindex="0" data-section="user-list-admin">
                     <i class="icon fa fa-user" aria-hidden="true"></i>
                     <div class="text">{{ _('Users') }}</div>
@@ -98,12 +99,17 @@
                     <i class="locked fa fa-lock" title="{{ _('Only organization administrators can edit these settings.') }}"></i>
                     {% endif %}
                 </li>
-                {% if is_admin %}
+                {% endif %}
+                {% if not is_guest %}
                 <li tabindex="0" data-section="deactivated-users-admin">
                     <i class="icon fa fa-trash-o" aria-hidden="true"></i>
                     <div class="text">{{ _('Deactivated users') }}</div>
+                    {% if not is_admin %}
+                    <i class="locked fa fa-lock" title="{{ _('Only organization administrators can edit these settings.') }}"></i>
+                    {% endif %}
                 </li>
                 {% endif %}
+                {% if not is_guest %}
                 <li tabindex="0" data-section="bot-list-admin">
                     <i class="icon fa fa-github" aria-hidden="true"></i>
                     <div class="text">{{ _('Bots') }}</div>
@@ -111,8 +117,9 @@
                     <i class="locked fa fa-lock" title="{{ _('Only organization administrators can edit these settings.') }}"></i>
                     {% endif %}
                 </li>
+                {% endif %}
                 {% if not is_guest %}
-                <li tabindex="0" data-section="default-streams-list">
+                <li class="collapse-org-settings {% if not is_admin %}hide-org-settings{% endif %}" tabindex="0" data-section="default-streams-list">
                     <i class="icon fa fa-exchange" aria-hidden="true"></i>
                     <div class="text">{{ _('Default streams') }}</div>
                     {% if not is_admin %}
@@ -127,18 +134,27 @@
                     <i class="locked fa fa-lock" title="{{ _('Only organization administrators can edit these settings.') }}"></i>
                     {% endif %}
                 </li>
+                {% if is_admin %}
                 <li tabindex="0" data-section="profile-field-settings">
                     <i class="icon fa fa-user" aria-hidden="true"></i>
                     <div class="text">{{ _('Custom profile fields') }}</div>
-                    {% if not is_admin %}
-                    <i class="locked fa fa-lock" title="{{ _('Only organization administrators can edit these settings.') }}"></i>
-                    {% endif %}
                 </li>
+                {% endif %}
                 {% if is_admin %}
                 <li tabindex="0" data-section="invites-list-admin">
                     <i class="icon fa fa-user" aria-hidden="true"></i>
                     <div class="text">{{ _('Invitations') }}</div>
                 </li>
+                <li tabindex="0" data-section="data-exports-admin">
+                    <i class="icon fa fa-database" aria-hidden="true"></i>
+                    <div class="text">{{ _('Data exports') }}</div>
+                </li>
+                {% endif %}
+                {% if not is_admin %}
+                <div class="collapse-settings-btn">
+                    <i id='toggle_collapse_chevron' class='fa fa-angle-double-down'></i>
+                    <p id='toggle_collapse'>{{ _('Show more') }}</p>
+                </div>
                 {% endif %}
             </ul>
         </div>
@@ -150,7 +166,7 @@
                 <span class="exit-sign">&times;</span>
             </div>
         </div>
-        <div id="settings_content">
+        <div id="settings_content" data-simplebar data-simplebar-auto-hide="false">
             <div class="organization-box organization">
 
             </div>

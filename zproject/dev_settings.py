@@ -1,4 +1,3 @@
-
 # For the Dev VM environment, we use the same settings as the
 # sample prod_settings.py file, with a few exceptions.
 from .prod_settings_template import *
@@ -15,8 +14,8 @@ LOCAL_UPLOADS_DIR = os.path.join(DEPLOY_ROOT, 'var/uploads')
 
 FORWARD_ADDRESS_CONFIG_FILE = "var/forward_address.ini"
 # Check if test_settings.py set EXTERNAL_HOST.
-EXTERNAL_HOST = os.getenv('EXTERNAL_HOST')
-if EXTERNAL_HOST is None:
+external_host_env = os.getenv('EXTERNAL_HOST')
+if external_host_env is None:
     user_id = os.getuid()
     user_name = pwd.getpwuid(user_id).pw_name
     if user_name == "zulipdev":
@@ -32,6 +31,7 @@ if EXTERNAL_HOST is None:
             'zulip': 'localhost:9991'
         }
 else:
+    EXTERNAL_HOST = external_host_env
     REALM_HOSTS = {
         'zulip': EXTERNAL_HOST,
     }
@@ -44,7 +44,8 @@ AUTHENTICATION_BACKENDS = (
     'zproject.backends.DevAuthBackend',
     'zproject.backends.EmailAuthBackend',
     'zproject.backends.GitHubAuthBackend',
-    'zproject.backends.GoogleMobileOauth2Backend',
+    'zproject.backends.GoogleAuthBackend',
+    'zproject.backends.SAMLAuthBackend',
     # 'zproject.backends.AzureADAuthBackend',
 )
 
@@ -72,9 +73,6 @@ SYSTEM_ONLY_REALMS = set()  # type: Set[str]
 USING_PGROONGA = True
 # Flush cache after migration.
 POST_MIGRATION_CACHE_FLUSHING = True  # type: bool
-
-# Enable inline open graph preview in development for now
-INLINE_URL_EMBED_PREVIEW = True
 
 # Don't require anything about password strength in development
 PASSWORD_MIN_LENGTH = 0
@@ -111,19 +109,43 @@ FAKE_LDAP_MODE = None  # type: Optional[str]
 # FAKE_LDAP_NUM_USERS = 8
 
 if FAKE_LDAP_MODE:
+    import ldap
+    from django_auth_ldap.config import LDAPSearch
+    # To understand these parameters, read the docs in
+    # prod_settings_template.py and on ReadTheDocs.
     LDAP_APPEND_DOMAIN = None
-    AUTH_LDAP_USER_DN_TEMPLATE = 'uid=%(user)s,ou=users,dc=zulip,dc=com'
+    AUTH_LDAP_USER_SEARCH = LDAPSearch("ou=users,dc=zulip,dc=com",
+                                       ldap.SCOPE_ONELEVEL, "(uid=%(user)s)")
+    AUTH_LDAP_REVERSE_EMAIL_SEARCH = LDAPSearch("ou=users,dc=zulip,dc=com",
+                                                ldap.SCOPE_ONELEVEL, "(email=%(email)s)")
 
     if FAKE_LDAP_MODE == 'a':
-        import ldap
-        from django_auth_ldap.config import LDAPSearch
-        AUTH_LDAP_USER_SEARCH = LDAPSearch("ou=users,dc=zulip,dc=com",
-                                           ldap.SCOPE_SUBTREE, "(email=%(user)s)")
+        AUTH_LDAP_REVERSE_EMAIL_SEARCH = LDAPSearch("ou=users,dc=zulip,dc=com",
+                                                    ldap.SCOPE_ONELEVEL, "(uid=%(email)s)")
+        AUTH_LDAP_USERNAME_ATTR = "uid"
+        AUTH_LDAP_USER_ATTR_MAP = {
+            "full_name": "cn",
+            "avatar": "thumbnailPhoto",
+            # This won't do much unless one changes the fact that
+            # all users have LDAP_USER_ACCOUNT_CONTROL_NORMAL in
+            # zerver/lib/dev_ldap_directory.py
+            "userAccountControl": "userAccountControl",
+        }
     elif FAKE_LDAP_MODE == 'b':
         LDAP_APPEND_DOMAIN = 'zulip.com'
+        AUTH_LDAP_USER_ATTR_MAP = {
+            "full_name": "cn",
+            "avatar": "jpegPhoto",
+            "custom_profile_field__birthday": "birthDate",
+            "custom_profile_field__phone_number": "phoneNumber",
+        }
     elif FAKE_LDAP_MODE == 'c':
-        LDAP_EMAIL_ATTR = 'email'  # type: Optional[str]
-    AUTHENTICATION_BACKENDS += ('zproject.backends.ZulipLDAPAuthBackend',)  # type: ignore # tuple hackery
+        AUTH_LDAP_USERNAME_ATTR = "uid"
+        LDAP_EMAIL_ATTR = 'email'
+        AUTH_LDAP_USER_ATTR_MAP = {
+            "full_name": "cn",
+        }
+    AUTHENTICATION_BACKENDS += ('zproject.backends.ZulipLDAPAuthBackend',)
 
 THUMBOR_URL = 'http://127.0.0.1:9995'
 THUMBNAIL_IMAGES = True
@@ -131,3 +153,16 @@ THUMBNAIL_IMAGES = True
 SEARCH_PILLS_ENABLED = os.getenv('SEARCH_PILLS_ENABLED', False)
 
 BILLING_ENABLED = True
+
+# Test Custom TOS template rendering
+TERMS_OF_SERVICE = 'corporate/terms.md'
+
+# Our run-dev.py proxy uses X-Forwarded-Port to communicate to Django
+# that the request is actually on port 9991, not port 9992 (the Django
+# server's own port); this setting tells Django to read that HTTP
+# header.  Important for SAML authentication in the development
+# environment.
+USE_X_FORWARDED_PORT = True
+
+# Override the default SAML entity ID
+SOCIAL_AUTH_SAML_SP_ENTITY_ID = "http://localhost:9991/"

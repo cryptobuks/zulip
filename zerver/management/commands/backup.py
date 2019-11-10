@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 from argparse import ArgumentParser, RawTextHelpFormatter
 from typing import Any
@@ -7,7 +8,7 @@ from django.conf import settings
 from django.db import connection
 from django.utils.timezone import now as timezone_now
 
-from scripts.lib.zulip_tools import parse_lsb_release, run, TIMESTAMP_FORMAT
+from scripts.lib.zulip_tools import parse_os_release, run, TIMESTAMP_FORMAT
 from version import ZULIP_VERSION
 from zerver.lib.management import ZulipBaseCommand
 from zerver.logging_handlers import try_git_describe
@@ -22,17 +23,19 @@ class Command(ZulipBaseCommand):
 
     def add_arguments(self, parser: ArgumentParser) -> None:
         parser.add_argument(
-            "output", default=None, nargs="?", help="Filename of output tarball"
+            "--output", default=None, nargs="?", help="Filename of output tarball"
         )
+        parser.add_argument("--skip-db", action='store_true', help="Skip database backup")
+        parser.add_argument("--skip-uploads", action='store_true', help="Skip uploads backup")
 
     def handle(self, *args: Any, **options: Any) -> None:
         timestamp = timezone_now().strftime(TIMESTAMP_FORMAT)
-
         with tempfile.TemporaryDirectory(
             prefix="zulip-backup-%s-" % (timestamp,)
         ) as tmp:
             os.mkdir(os.path.join(tmp, "zulip-backup"))
             members = []
+            paths = []
 
             with open(os.path.join(tmp, "zulip-backup", "zulip-version"), "w") as f:
                 print(ZULIP_VERSION, file=f)
@@ -43,7 +46,7 @@ class Command(ZulipBaseCommand):
 
             with open(os.path.join(tmp, "zulip-backup", "os-version"), "w") as f:
                 print(
-                    "{DISTRIB_ID} {DISTRIB_CODENAME}".format(**parse_lsb_release()),
+                    "{ID} {VERSION_ID}".format(**parse_os_release()),
                     file=f,
                 )
             members.append("zulip-backup/os-version")
@@ -53,31 +56,45 @@ class Command(ZulipBaseCommand):
             members.append("zulip-backup/postgres-version")
 
             if settings.DEVELOPMENT:
-                os.symlink(
-                    os.path.join(settings.DEPLOY_ROOT, "zproject"),
-                    os.path.join(tmp, "zulip-backup", "zproject"),
+                members.append(
+                    os.path.join(settings.DEPLOY_ROOT, "zproject", "dev-secrets.conf")
                 )
-                members.append("zulip-backup/zproject/dev-secrets.conf")
+                paths.append(
+                    ("zproject", os.path.join(settings.DEPLOY_ROOT, "zproject"))
+                )
             else:
-                os.symlink("/etc/zulip", os.path.join(tmp, "zulip-backup", "settings"))
-                members.append("zulip-backup/settings")
+                members.append("/etc/zulip")
+                paths.append(("settings", "/etc/zulip"))
 
-            db_name = settings.DATABASES["default"]["NAME"]
-            db_dir = os.path.join(tmp, "zulip-backup", "database")
-            run(
-                ["pg_dump", "--format=directory", "--file", db_dir, "--", db_name],
-                cwd=tmp,
-            )
-            members.append("zulip-backup/database")
+            if not options['skip_db']:
+                db_name = settings.DATABASES["default"]["NAME"]
+                db_dir = os.path.join(tmp, "zulip-backup", "database")
+                run(
+                    ["pg_dump", "--format=directory", "--file", db_dir, "--", db_name],
+                    cwd=tmp,
+                )
+                members.append("zulip-backup/database")
 
-            if settings.LOCAL_UPLOADS_DIR is not None and os.path.exists(
+            if not options['skip_uploads'] and settings.LOCAL_UPLOADS_DIR is not None and os.path.exists(
                 os.path.join(settings.DEPLOY_ROOT, settings.LOCAL_UPLOADS_DIR)
             ):
-                os.symlink(
-                    os.path.join(settings.DEPLOY_ROOT, settings.LOCAL_UPLOADS_DIR),
-                    os.path.join(tmp, "zulip-backup", "uploads"),
+                members.append(
+                    os.path.join(settings.DEPLOY_ROOT, settings.LOCAL_UPLOADS_DIR)
                 )
-                members.append("zulip-backup/uploads")
+                paths.append(
+                    (
+                        "uploads",
+                        os.path.join(settings.DEPLOY_ROOT, settings.LOCAL_UPLOADS_DIR),
+                    )
+                )
+
+            assert not any("|" in name or "|" in path for name, path in paths)
+            transform_args = [
+                r"--transform=s|^{}(/.*)?$|zulip-backup/{}\1|x".format(
+                    re.escape(path), name.replace("\\", r"\\")
+                )
+                for name, path in paths
+            ]
 
             try:
                 if options["output"] is None:
@@ -89,7 +106,12 @@ class Command(ZulipBaseCommand):
                 else:
                     tarball_path = options["output"]
 
-                run(["tar", "-C", tmp, "-chzf", tarball_path, "--"] + members)
+                run(
+                    ["tar", "-C", tmp, "-cPzf", tarball_path]
+                    + transform_args
+                    + ["--"]
+                    + members
+                )
                 print("Backup tarball written to %s" % (tarball_path,))
             except BaseException:
                 if options["output"] is None:

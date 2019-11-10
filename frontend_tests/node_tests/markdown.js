@@ -1,6 +1,5 @@
-/*global Dict */
 zrequire('hash_util');
-zrequire('katex', 'node_modules/katex/dist/katex.min.js');
+zrequire('katex', 'katex/dist/katex.min.js');
 zrequire('marked', 'third/marked/lib/marked');
 zrequire('util');
 zrequire('fenced_code');
@@ -130,14 +129,14 @@ var denmark = {
     color: 'blue',
     name: 'Denmark',
     stream_id: 1,
-    in_home_view: false,
+    is_muted: true,
 };
 var social = {
     subscribed: true,
     color: 'red',
     name: 'social',
     stream_id: 2,
-    in_home_view: true,
+    is_muted: false,
     invite_only: true,
 };
 var edgecase_stream = {
@@ -145,11 +144,21 @@ var edgecase_stream = {
     color: 'green',
     name: 'Bobby <h1>Tables</h1>',
     stream_id: 3,
-    in_home_view: true,
+    is_muted: false,
+};
+var edgecase_stream_2 = {
+    subscribed: true,
+    color: 'yellow',
+    name: 'Bobby <h1',
+    stream_id: 4,
+    is_muted: false,
 };
 stream_data.add_sub('Denmark', denmark);
 stream_data.add_sub('social', social);
 stream_data.add_sub('Bobby <h1>Tables</h1>', edgecase_stream);
+stream_data.add_sub('Bobby <h1', edgecase_stream_2);
+// Note: edgecase_stream cannot be mentioned because it is caught by
+// streamTopicHandler and it would be parsed as edgecase_stream_2.
 
 // Check the default behavior of fenced code blocks
 // works properly before markdown is initialized.
@@ -275,7 +284,7 @@ run_test('marked', () => {
         {input: 'Some text first\n* a\n* list \n* here\n\nand then after',
          expected: '<p>Some text first</p>\n<ul>\n<li>a</li>\n<li>list </li>\n<li>here</li>\n</ul>\n<p>and then after</p>'},
         {input: '1. an\n2. ordered \n3. list',
-         expected: '<p>1. an<br>\n2. ordered<br>\n3. list</p>'},
+         expected: '<ol>\n<li>an</li>\n<li>ordered </li>\n<li>list</li>\n</ol>'},
         {input: '\n~~~quote\nquote this for me\n~~~\nthanks\n',
          expected: '<blockquote>\n<p>quote this for me</p>\n</blockquote>\n<p>thanks</p>'},
         {input: 'This is a @**Cordelia Lear** mention',
@@ -289,11 +298,17 @@ run_test('marked', () => {
         {input: 'These #* #*** are also not mentions',
          expected: '<p>These #* #*** are also not mentions</p>'},
         {input: 'This is a #**Denmark** stream link',
-         expected: '<p>This is a <a class="stream" data-stream-id="1" href="http://zulip.zulipdev.com/#narrow/stream/1-Denmark">#Denmark</a> stream link</p>'},
+         expected: '<p>This is a <a class="stream" data-stream-id="1" href="/#narrow/stream/1-Denmark">#Denmark</a> stream link</p>'},
         {input: 'This is #**Denmark** and #**social** stream links',
-         expected: '<p>This is <a class="stream" data-stream-id="1" href="http://zulip.zulipdev.com/#narrow/stream/1-Denmark">#Denmark</a> and <a class="stream" data-stream-id="2" href="http://zulip.zulipdev.com/#narrow/stream/2-social">#social</a> stream links</p>'},
+         expected: '<p>This is <a class="stream" data-stream-id="1" href="/#narrow/stream/1-Denmark">#Denmark</a> and <a class="stream" data-stream-id="2" href="/#narrow/stream/2-social">#social</a> stream links</p>'},
         {input: 'And this is a #**wrong** stream link',
          expected: '<p>And this is a #**wrong** stream link</p>'},
+        {input: 'This is a #**Denmark>some topic** stream_topic link',
+         expected: '<p>This is a <a class="stream-topic" data-stream-id="1" href="/#narrow/stream/1-Denmark/topic/some.20topic">#Denmark > some topic</a> stream_topic link</p>'},
+        {input: 'This has two links: #**Denmark>some topic** and #**social>other topic**.',
+         expected: '<p>This has two links: <a class="stream-topic" data-stream-id="1" href="/#narrow/stream/1-Denmark/topic/some.20topic">#Denmark > some topic</a> and <a class="stream-topic" data-stream-id="2" href="/#narrow/stream/2-social/topic/other.20topic">#social > other topic</a>.</p>'},
+        {input: 'This is not a #**Denmark>** stream_topic link',
+         expected: '<p>This is not a #**Denmark&gt;** stream_topic link</p>'},
         {input: 'mmm...:burrito:s',
          expected: '<p>mmm...<img alt=":burrito:" class="emoji" src="/static/generated/emoji/images/emoji/burrito.png" title="burrito">s</p>'},
         {input: 'This is an :poop: message',
@@ -324,7 +339,7 @@ run_test('marked', () => {
         {input: 'Test *italic*',
          expected: '<p>Test <em>italic</em></p>'},
         {input: 'T\n#**Denmark**',
-         expected: '<p>T<br>\n<a class="stream" data-stream-id="1" href="http://zulip.zulipdev.com/#narrow/stream/1-Denmark">#Denmark</a></p>'},
+         expected: '<p>T<br>\n<a class="stream" data-stream-id="1" href="/#narrow/stream/1-Denmark">#Denmark</a></p>'},
         {input: 'T\n@**Cordelia Lear**',
          expected: '<p>T<br>\n<span class="user-mention" data-user-id="101">@Cordelia Lear</span></p>'},
         {input: '@**Mark Twin|104** and @**Mark Twin|105** are out to confuse you.',
@@ -371,7 +386,7 @@ run_test('marked', () => {
         {input: '@**Bobby <h1>Tables</h1>**',
          expected: '<p><span class="user-mention" data-user-id="103">@Bobby &lt;h1&gt;Tables&lt;/h1&gt;</span></p>'},
         {input: '#**Bobby <h1>Tables</h1>**',
-         expected: '<p><a class="stream" data-stream-id="3" href="http://zulip.zulipdev.com/#narrow/stream/3-Bobby-.3Ch1.3ETables.3C.2Fh1.3E">#Bobby &lt;h1&gt;Tables&lt;/h1&gt;</a></p>'},
+         expected: '<p><a class="stream-topic" data-stream-id="4" href="/#narrow/stream/4-Bobby-.3Ch1/topic/Tables.3C.2Fh1.3E">#Bobby &lt;h1 > Tables&lt;/h1&gt;</a></p>'},
     ];
 
     // We remove one of the unicode emoji we put as input in one of the test
@@ -424,6 +439,18 @@ run_test('topic_links', () => {
     markdown.add_topic_links(message);
     assert.equal(util.get_topic_links(message).length, 1);
     assert.equal(util.get_topic_links(message)[0], "https://zone_45.zulip.net/ticket/123");
+
+    message = {type: 'stream', topic: "Hello https://google.com"};
+    markdown.add_topic_links(message);
+    assert.equal(util.get_topic_links(message).length, 1);
+    assert.equal(util.get_topic_links(message)[0], "https://google.com");
+
+    message = {type: 'stream', topic: "#456 https://google.com https://github.com"};
+    markdown.add_topic_links(message);
+    assert.equal(util.get_topic_links(message).length, 3);
+    assert(util.get_topic_links(message).indexOf("https://google.com") !== -1);
+    assert(util.get_topic_links(message).indexOf("https://github.com") !== -1);
+    assert(util.get_topic_links(message).indexOf("https://trac.zulip.net/ticket/456") !== -1);
 
     message = {type: "not-stream"};
     markdown.add_topic_links(message);

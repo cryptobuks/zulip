@@ -23,6 +23,8 @@
 * [Topic muting](/api/mute-topics)
 * [Create a stream](/api/create-stream)
 * [Get stream ID](/api/get-stream-id)
+* [Delete a stream](/api/delete-stream)
+* [Update a stream](/api/update-stream)
 
 #### Users
 
@@ -32,6 +34,10 @@
 * [Set "typing" status](/api/typing)
 * [Get user presence](/api/get-presence)
 * [Get all user groups](/api/get-user-groups)
+* [Update notification settings](/api/update-notification-settings)
+* [Create a user group](/api/create-user-group)
+* [Update a user group](/api/update-user-group)
+* [Delete a user group](/api/delete-user-group)
 
 #### Server & organizations
 

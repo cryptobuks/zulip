@@ -1,32 +1,9 @@
-var info_overlay = (function () {
-
-var exports = {};
-
-function adjust_mac_shortcuts() {
-    var keys_map = [
-        ['Backspace', 'Delete'],
-        ['Enter', 'Return'],
-        ['Home', 'Fn + Left'],
-        ['End', 'Fn + Right'],
-        ['PgUp', 'Fn + Up'],
-        ['PgDn', 'Fn + Down'],
-    ];
-
-    $(".hotkeys_table").each(function () {
-        var html = $(this).html();
-        keys_map.forEach(function (pair) {
-            html = html.replace(new RegExp(pair[0]), pair[1]);
-        });
-        $(this).html(html);
-    });
-}
-
 // Make it explicit that our toggler is undefined until
 // set_up_toggler is called.
 exports.toggler = undefined;
 
 exports.set_up_toggler = function () {
-    var opts = {
+    const opts = {
         selected: 0,
         child_wants_focus: true,
         values: [
@@ -41,13 +18,13 @@ exports.set_up_toggler = function () {
         },
     };
 
-    var toggler = components.toggle(opts);
-    var elem = toggler.get();
-    elem.addClass('large');
+    exports.toggler = components.toggle(opts);
+    const elem = exports.toggler.get();
+    elem.addClass('large allow-overflow');
 
-    var modals = _.map(opts.values, function (item) {
-        var key = item.key; // e.g. message-formatting
-        var modal = $('#' + key).find('.modal-body');
+    const modals = _.map(opts.values, function (item) {
+        const key = item.key; // e.g. message-formatting
+        const modal = $('#' + key).find('.modal-body');
         return modal;
     });
 
@@ -55,19 +32,16 @@ exports.set_up_toggler = function () {
         keydown_util.handle({
             elem: modal,
             handlers: {
-                left_arrow: toggler.maybe_go_left,
-                right_arrow: toggler.maybe_go_right,
+                left_arrow: exports.toggler.maybe_go_left,
+                right_arrow: exports.toggler.maybe_go_right,
             },
         });
     });
 
     $(".informational-overlays .overlay-tabs").append(elem);
 
-    if (/Mac/i.test(navigator.userAgent)) {
-        adjust_mac_shortcuts();
-    }
-
-    exports.toggler = toggler;
+    common.adjust_mac_shortcuts(".hotkeys_table .hotkey kbd");
+    common.adjust_mac_shortcuts("#markdown-instructions kbd");
 };
 
 exports.show = function (target) {
@@ -75,7 +49,7 @@ exports.show = function (target) {
         exports.set_up_toggler();
     }
 
-    var overlay = $(".informational-overlays");
+    const overlay = $(".informational-overlays");
 
     if (!overlay.hasClass("show")) {
         overlays.open_overlay({
@@ -102,10 +76,4 @@ exports.maybe_show_keyboard_shortcuts = function () {
     exports.show("keyboard-shortcuts");
 };
 
-return exports;
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = info_overlay;
-}
-window.info_overlay = info_overlay;
+window.info_overlay = exports;

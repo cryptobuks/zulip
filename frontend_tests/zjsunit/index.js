@@ -1,21 +1,19 @@
-require('ts-node').register({
-    project: 'static/js/tsconfig.json',
-    compilerOptions: {
-        typeRoots: ["node_modules/@types", "../../static/js/js_typings"],
-        // We don't have webpack to handle es6 modules here so directly
-        // transpile to CommonJS format.
-        module: "commonjs",
-    },
+const path = require('path');
+const fs = require('fs');
+const escapeRegExp = require("lodash/escapeRegExp");
+
+require("@babel/register")({
+    extensions: [".es6", ".es", ".jsx", ".js", ".mjs", ".ts"],
+    only: [
+        new RegExp("^" + escapeRegExp(path.resolve(__dirname, "../../static/js")) + path.sep),
+        new RegExp("^" + escapeRegExp(path.resolve(__dirname, "../../static/shared/js")) + path.sep),
+    ],
+    plugins: ["rewire-ts"],
 });
 
-var path = require('path');
-var fs = require('fs');
-
 global.assert = require('assert');
-require('node_modules/string.prototype.codepointat/codepointat.js');
-
-global._ = require('node_modules/underscore/underscore.js');
-var _ = global._;
+global._ = require('underscore/underscore.js');
+const _ = global._;
 const windowObj = {
     location: {
         hash: '#',
@@ -27,7 +25,7 @@ global.window = _.extend({}, windowObj, {
     },
 });
 
-global.Dict = require('js/dict').Dict;
+global.Dict = require('../../static/js/dict').Dict;
 
 // Create a helper function to avoid sneaky delays in tests.
 function immediate(f) {
@@ -37,14 +35,14 @@ function immediate(f) {
 }
 
 // Find the files we need to run.
-var finder = require('./finder.js');
-var files = finder.find_files_to_run(); // may write to console
+const finder = require('./finder.js');
+const files = finder.find_files_to_run(); // may write to console
 if (_.isEmpty(files)) {
     throw "No tests found";
 }
 
 // Set up our namespace helpers.
-var namespace = require('./namespace.js');
+const namespace = require('./namespace.js');
 global.set_global = namespace.set_global;
 global.patch_builtin = namespace.patch_builtin;
 global.zrequire = namespace.zrequire;
@@ -52,15 +50,8 @@ global.stub_out_jquery = namespace.stub_out_jquery;
 global.with_overrides = namespace.with_overrides;
 
 // Set up stub helpers.
-var stub = require('./stub.js');
+const stub = require('./stub.js');
 global.with_stub = stub.with_stub;
-
-// Set up helpers to render templates.
-var render = require('./render.js');
-global.find_included_partials = render.find_included_partials;
-global.compile_template = render.compile_template;
-global.render_template = render.render_template;
-global.walk = render.walk;
 
 // Set up fake jQuery
 global.make_zjquery = require('./zjquery.js').make_zjquery;
@@ -71,7 +62,12 @@ global.make_zblueslip = require('./zblueslip.js').make_zblueslip;
 // Set up fake translation
 global.stub_i18n = require('./i18n.js');
 
-var noop = function () {};
+// Set up Handlebars
+const handlebars = require('./handlebars.js');
+global.make_handlebars = handlebars.make_handlebars;
+global.stub_templates = handlebars.stub_templates;
+
+const noop = function () {};
 
 // Set up fake module.hot
 // eslint-disable-next-line no-native-reassign
@@ -82,15 +78,15 @@ module.prototype.hot = {
 
 // Set up fixtures.
 global.read_fixture_data = (fn) => {
-    var full_fn = path.join(__dirname, '../../zerver/tests/fixtures/', fn);
-    var data = JSON.parse(fs.readFileSync(full_fn, 'utf8', 'r'));
+    const full_fn = path.join(__dirname, '../../zerver/tests/fixtures/', fn);
+    const data = JSON.parse(fs.readFileSync(full_fn, 'utf8', 'r'));
     return data;
 };
 
 function short_tb(tb) {
     const lines = tb.split('\n');
 
-    var i = _.findIndex(lines, (line) => {
+    const i = _.findIndex(lines, (line) => {
         return line.includes('run_test') || line.includes('run_one_module');
     });
 
@@ -123,7 +119,6 @@ try {
         _.throttle = immediate;
         _.debounce = immediate;
 
-        render.init();
         run_one_module(file);
         namespace.restore();
     });

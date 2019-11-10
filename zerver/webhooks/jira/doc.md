@@ -14,10 +14,13 @@ These instructions apply to Atlassian Cloud's hosted JIRA, and JIRA Server versi
 1. Set **Name** to a name of your choice, such as `Zulip`. Set **Status** to
    **Enabled**, and set **URL** to the URL constructed above. Select the events
    you'd like to be notified about, and click **Create**. We
-   support the following events:
+   support the following **Issue** and **Comment** events:
     * when an issue is created
     * when an issue is deleted
     * when an issue is updated
+    * when a comment is added
+    * when a comment is updated
+    * when a comment is deleted
 
 {!congrats.md!}
 

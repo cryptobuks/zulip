@@ -1,6 +1,8 @@
 from contextlib import contextmanager
+from email.utils import parseaddr
+from fakeldap import MockLDAP
 from typing import (cast, Any, Dict, Iterable, Iterator, List, Optional,
-                    Tuple, Union)
+                    Tuple, Union, Set)
 
 from django.apps import apps
 from django.db.migrations.state import StateApps
@@ -16,11 +18,14 @@ from django.db.migrations.executor import MigrationExecutor
 from django.db import connection
 from django.db.utils import IntegrityError
 from django.http import HttpRequest
+from django.utils import translation
 
 from two_factor.models import PhoneDevice
 from zerver.lib.initial_password import initial_password
 from zerver.lib.utils import is_remote_server
 from zerver.lib.users import get_api_key
+from zerver.lib.sessions import get_session_dict_user
+from zerver.lib.webhooks.common import get_fixture_http_headers, standardize_headers
 
 from zerver.lib.actions import (
     check_send_message, create_stream_if_needed, bulk_add_subscriptions,
@@ -39,11 +44,13 @@ from zerver.lib.test_helpers import (
 
 from zerver.models import (
     clear_supported_auth_backends_cache,
+    flush_per_request_caches,
     get_stream,
     get_client,
     get_display_recipient,
     get_user,
     get_realm,
+    get_system_bot,
     Client,
     Message,
     Realm,
@@ -51,6 +58,7 @@ from zerver.models import (
     Stream,
     Subscription,
     UserProfile,
+    get_realm_stream
 )
 from zilencer.models import get_remote_server_by_uuid
 from zerver.decorator import do_two_factor_login
@@ -63,6 +71,7 @@ import re
 import ujson
 import urllib
 import shutil
+import tempfile
 
 API_KEYS = {}  # type: Dict[str, str]
 
@@ -97,6 +106,14 @@ class ZulipTestCase(TestCase):
         # Important: we need to clear event queues to avoid leaking data to future tests.
         clear_client_event_queues_for_testing()
         clear_supported_auth_backends_cache()
+        flush_per_request_caches()
+        translation.activate(settings.LANGUAGE_CODE)
+
+        # Clean up after using fakeldap in ldap tests:
+        if hasattr(self, 'mock_ldap') and hasattr(self, 'mock_initialize'):
+            if self.mock_ldap is not None:
+                self.mock_ldap.reset()
+            self.mock_initialize.stop()
 
     '''
     WRAPPER_COMMENT:
@@ -216,7 +233,8 @@ class ZulipTestCase(TestCase):
         polonius='polonius@zulip.com',
         webhook_bot='webhook-bot@zulip.com',
         welcome_bot='welcome-bot@zulip.com',
-        outgoing_webhook_bot='outgoing-webhook@zulip.com'
+        outgoing_webhook_bot='outgoing-webhook@zulip.com',
+        default_bot='default-bot@zulip.com'
     )
 
     mit_user_map = dict(
@@ -240,6 +258,13 @@ class ZulipTestCase(TestCase):
         cordelia='cordelia@zulip.com',
         newguy='newguy@zulip.com',
         me='me@zulip.com',
+    )
+
+    example_user_ldap_username_map = dict(
+        hamlet='hamlet',
+        cordelia='cordelia',
+        # aaron's uid in our test directory is "letham".
+        aaron='letham',
     )
 
     def nonreg_user(self, name: str) -> UserProfile:
@@ -268,7 +293,7 @@ class ZulipTestCase(TestCase):
         return self.mit_user_map[name]
 
     def notification_bot(self) -> UserProfile:
-        return get_user('notification-bot@zulip.com', get_realm('zulip'))
+        return get_system_bot(settings.NOTIFICATION_BOT)
 
     def create_test_bot(self, short_name: str, user_profile: UserProfile,
                         assert_json_error_msg: str=None, **extras: Any) -> Optional[UserProfile]:
@@ -351,6 +376,7 @@ class ZulipTestCase(TestCase):
         """
         if full_name is None:
             full_name = email.replace("@", "_")
+
         payload = {
             'full_name': full_name,
             'password': password,
@@ -374,7 +400,7 @@ class ZulipTestCase(TestCase):
             # This is a bit of a crude heuristic, but good enough for most tests.
             url_pattern = settings.EXTERNAL_HOST + r"(\S+)>"
         for message in reversed(outbox):
-            if email_address in message.to:
+            if email_address in parseaddr(message.to)[1]:
                 return re.search(url_pattern, message.body).groups()[0]
         else:
             raise AssertionError("Couldn't find a confirmation email.")
@@ -396,24 +422,24 @@ class ZulipTestCase(TestCase):
         credentials = "%s:%s" % (identifier, api_key)
         return 'Basic ' + base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
 
-    def api_get(self, email: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(email)
+    def api_get(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_get(*args, **kwargs)
 
     def api_post(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('realm', 'zulip'))
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_post(*args, **kwargs)
 
-    def api_patch(self, email: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(email)
+    def api_patch(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_patch(*args, **kwargs)
 
-    def api_put(self, email: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(email)
+    def api_put(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_put(*args, **kwargs)
 
-    def api_delete(self, email: str, *args: Any, **kwargs: Any) -> HttpResponse:
-        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(email)
+    def api_delete(self, identifier: str, *args: Any, **kwargs: Any) -> HttpResponse:
+        kwargs['HTTP_AUTHORIZATION'] = self.encode_credentials(identifier, kwargs.get('subdomain', 'zulip'))
         return self.client_delete(*args, **kwargs)
 
     def get_streams(self, email: str, realm: Realm) -> List[str]:
@@ -427,11 +453,12 @@ class ZulipTestCase(TestCase):
         return [cast(str, get_display_recipient(sub.recipient)) for sub in subs]
 
     def send_personal_message(self, from_email: str, to_email: str, content: str="test content",
-                              sender_realm: str="zulip") -> int:
+                              sender_realm: str="zulip",
+                              sending_client_name: str="test suite") -> int:
         sender = get_user(from_email, get_realm(sender_realm))
 
         recipient_list = [to_email]
-        (sending_client, _) = Client.objects.get_or_create(name="test suite")
+        (sending_client, _) = Client.objects.get_or_create(name=sending_client_name)
 
         return check_send_message(
             sender, sending_client, 'private', recipient_list, None,
@@ -439,12 +466,13 @@ class ZulipTestCase(TestCase):
         )
 
     def send_huddle_message(self, from_email: str, to_emails: List[str], content: str="test content",
-                            sender_realm: str="zulip") -> int:
+                            sender_realm: str="zulip",
+                            sending_client_name: str="test suite") -> int:
         sender = get_user(from_email, get_realm(sender_realm))
 
         assert(len(to_emails) >= 2)
 
-        (sending_client, _) = Client.objects.get_or_create(name="test suite")
+        (sending_client, _) = Client.objects.get_or_create(name=sending_client_name)
 
         return check_send_message(
             sender, sending_client, 'private', to_emails, None,
@@ -452,10 +480,12 @@ class ZulipTestCase(TestCase):
         )
 
     def send_stream_message(self, sender_email: str, stream_name: str, content: str="test content",
-                            topic_name: str="test", sender_realm: str="zulip") -> int:
+                            topic_name: str="test", sender_realm: str="zulip",
+                            recipient_realm: Optional[Realm]=None,
+                            sending_client_name: str="test suite") -> int:
         sender = get_user(sender_email, get_realm(sender_realm))
 
-        (sending_client, _) = Client.objects.get_or_create(name="test suite")
+        (sending_client, _) = Client.objects.get_or_create(name=sending_client_name)
 
         return check_send_stream_message(
             sender=sender,
@@ -463,6 +493,7 @@ class ZulipTestCase(TestCase):
             stream_name=stream_name,
             topic=topic_name,
             body=content,
+            realm=recipient_realm,
         )
 
     def get_messages_response(self, anchor: int=1, num_before: int=100, num_after: int=100,
@@ -554,6 +585,13 @@ class ZulipTestCase(TestCase):
         for substring in substrings:
             self.assertNotIn(substring, decoded)
 
+    def assert_logged_in_user_id(self, user_id: Optional[int]) -> None:
+        """
+        Verifies the user currently logged in for the test client has the provided user_id.
+        Pass None to verify no user is logged in.
+        """
+        self.assertEqual(get_session_dict_user(self.client.session), user_id)
+
     def webhook_fixture_data(self, type: str, action: str, file_type: str='json') -> str:
         fn = os.path.join(
             os.path.dirname(__file__),
@@ -597,6 +635,17 @@ class ZulipTestCase(TestCase):
         Recipient.objects.create(type_id=stream.id, type=Recipient.STREAM)
         return stream
 
+    INVALID_STREAM_ID = 999999
+
+    def get_stream_id(self, name: str, realm: Optional[Realm]=None) -> int:
+        if not realm:
+            realm = get_realm('zulip')
+        try:
+            stream = get_realm_stream(name, realm.id)
+        except Stream.DoesNotExist:
+            return self.INVALID_STREAM_ID
+        return stream.id
+
     # Subscribe to a stream directly
     def subscribe(self, user_profile: UserProfile, stream_name: str) -> Stream:
         try:
@@ -619,7 +668,6 @@ class ZulipTestCase(TestCase):
         post_data = {'subscriptions': ujson.dumps([{"name": stream} for stream in streams]),
                      'invite_only': ujson.dumps(invite_only)}
         post_data.update(extra_post_data)
-        kwargs['realm'] = kwargs.get('subdomain', 'zulip')
         result = self.api_post(email, "/api/v1/users/me/subscriptions", post_data, **kwargs)
         return result
 
@@ -692,10 +740,78 @@ class ZulipTestCase(TestCase):
             shutil.rmtree(path)
 
     def make_import_output_dir(self, exported_from: str) -> str:
-        output_dir = "var/test-{}-import".format(exported_from)
-        self.rm_tree(output_dir)
+        output_dir = tempfile.mkdtemp(dir=settings.TEST_WORKER_DIR,
+                                      prefix="test-" + exported_from + "-import-")
         os.makedirs(output_dir, exist_ok=True)
         return output_dir
+
+    def get_set(self, data: List[Dict[str, Any]], field: str) -> Set[str]:
+        values = set(r[field] for r in data)
+        return values
+
+    def find_by_id(self, data: List[Dict[str, Any]], db_id: int) -> Dict[str, Any]:
+        return [
+            r for r in data
+            if r['id'] == db_id][0]
+
+    def init_default_ldap_database(self) -> None:
+        """
+        Takes care of the mock_ldap setup, loads
+        a directory from zerver/tests/fixtures/ldap/directory.json with various entries
+        to be used by tests.
+        If a test wants to specify its own directory, it can just replace
+        self.mock_ldap.directory with its own content, but in most cases it should be
+        enough to use change_user_attr to make simple modifications to the pre-loaded
+        directory. If new user entries are needed to test for some additional unusual
+        scenario, it's most likely best to add that to directory.json.
+        """
+        directory = ujson.loads(self.fixture_data("directory.json", type="ldap"))
+
+        # Load binary attributes. If in "directory", an attribute as its value
+        # has a string starting with "file:", the rest of the string is assumed
+        # to be a path to the file from which binary data should be loaded,
+        # as the actual value of the attribute in ldap.
+        for dn, attrs in directory.items():
+            for attr, value in attrs.items():
+                if isinstance(value, str) and value.startswith("file:"):
+                    with open(value[5:], 'rb') as f:
+                        attrs[attr] = [f.read(), ]
+
+        ldap_patcher = mock.patch('django_auth_ldap.config.ldap.initialize')
+        self.mock_initialize = ldap_patcher.start()
+        self.mock_ldap = MockLDAP(directory)
+        self.mock_initialize.return_value = self.mock_ldap
+
+    def change_ldap_user_attr(self, username: str, attr_name: str, attr_value: Union[str, bytes],
+                              binary: bool=False) -> None:
+        """
+        Method for changing the value of an attribute of a user entry in the mock
+        directory. Use option binary=True if you want binary data to be loaded
+        into the attribute from a file specified at attr_value. This changes
+        the attribute only for the specific test function that calls this method,
+        and is isolated from other tests.
+        """
+        dn = "uid={username},ou=users,dc=zulip,dc=com".format(username=username)
+        if binary:
+            with open(attr_value, "rb") as f:
+                # attr_value should be a path to the file with the binary data
+                data = f.read()  # type: Union[str, bytes]
+        else:
+            data = attr_value
+
+        self.mock_ldap.directory[dn][attr_name] = [data, ]
+
+    def ldap_username(self, username: str) -> str:
+        """
+        Maps zulip username to the name of the corresponding ldap user
+        in our test directory at zerver/tests/fixtures/ldap/directory.json,
+        if the ldap user exists.
+        """
+        return self.example_user_ldap_username_map[username]
+
+    def ldap_password(self) -> str:
+        # Currently all ldap users have password "testing"
+        return "testing"
 
 class WebhookTestCase(ZulipTestCase):
     """
@@ -715,6 +831,7 @@ class WebhookTestCase(ZulipTestCase):
         return get_user(self.TEST_USER_EMAIL, get_realm("zulip"))
 
     def setUp(self) -> None:
+        super().setUp()
         self.url = self.build_webhook_url()
 
     def api_stream_message(self, email: str, *args: Any, **kwargs: Any) -> HttpResponse:
@@ -727,6 +844,9 @@ class WebhookTestCase(ZulipTestCase):
         payload = self.get_body(fixture_name)
         if content_type is not None:
             kwargs['content_type'] = content_type
+        headers = get_fixture_http_headers(self.FIXTURE_DIR_NAME, fixture_name)
+        headers = standardize_headers(headers)
+        kwargs.update(headers)
         msg = self.send_json_payload(self.test_user, self.url, payload,
                                      self.STREAM_NAME, **kwargs)
         self.do_test_topic(msg, expected_topic)
@@ -740,7 +860,9 @@ class WebhookTestCase(ZulipTestCase):
         payload = self.get_body(fixture_name)
         if content_type is not None:
             kwargs['content_type'] = content_type
-
+        headers = get_fixture_http_headers(self.FIXTURE_DIR_NAME, fixture_name)
+        headers = standardize_headers(headers)
+        kwargs.update(headers)
         sender = kwargs.get('sender', self.test_user)
         msg = self.send_json_payload(sender, self.url, payload,
                                      stream_name=None, **kwargs)
@@ -784,7 +906,7 @@ class WebhookTestCase(ZulipTestCase):
         if expected_message is not None:
             self.assertEqual(msg.content, expected_message)
 
-class MigrationsTestCase(ZulipTestCase):
+class MigrationsTestCase(ZulipTestCase):  # nocoverage
     """
     Test class for database migrations inspired by this blog post:
        https://www.caktusgroup.com/blog/2016/02/02/writing-unit-tests-django-migrations/

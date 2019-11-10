@@ -5,29 +5,6 @@ import time
 
 CursorObj = TypeVar('CursorObj', bound=cursor)
 
-def create_index_if_not_exist(index_name: str, table_name: str, column_string: str,
-                              where_clause: str) -> str:
-    #
-    # FUTURE TODO: When we no longer need to support postgres 9.3 for Trusty,
-    #              we can use "IF NOT EXISTS", which is part of postgres 9.5
-    #              (and which already is supported on Xenial systems).
-    stmt = '''
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1
-                FROM pg_class
-                where relname = '%s'
-                ) THEN
-                    CREATE INDEX
-                    %s
-                    ON %s (%s)
-                    %s;
-            END IF;
-        END$$;
-        ''' % (index_name, index_name, table_name, column_string, where_clause)
-    return stmt
-
 
 def do_batch_update(cursor: CursorObj,
                     table: str,
@@ -36,11 +13,13 @@ def do_batch_update(cursor: CursorObj,
                     batch_size: int=10000,
                     sleep: float=0.1,
                     escape: bool=True) -> None:  # nocoverage
+    # The string substitution below is complicated by our need to
+    # support multiple postgres versions.
     stmt = '''
         UPDATE %s
-        SET (%s) = ROW(%s)
+        SET %s
         WHERE id >= %%s AND id < %%s
-    ''' % (table, ', '.join(cols), ', '.join(['%s'] * len(cols)))
+    ''' % (table, ', '.join(['%s = %%s' % (col) for col in cols]))
 
     cursor.execute("SELECT MIN(id), MAX(id) FROM %s" % (table,))
     (min_id, max_id) = cursor.fetchall()[0]

@@ -25,7 +25,7 @@ body.night-mode {
     }
 
     .message_embed .data-container::after {
-        background: linear-gradient(0deg, hsl(212, 28%, 18%), transparent 10%);
+        background: linear-gradient(0deg, hsl(212, 28%, 18%), transparent 100%);
     }
 
     .column-left .left-sidebar,
@@ -92,8 +92,26 @@ on a dark background, and don't change the dark labels dark either. */
         opacity: 0.5;
     }
 
-    .new-style .button:not(.save-status),
-    .new-style .button[disabled=disabled]:hover,
+    .new-style .button {
+        background-color: hsla(0, 0%, 0%, 0.2);
+
+        &:not(.sea-green):not(.btn-danger):not(.btn-warning):not(.btn-link) {
+            border-color: hsla(0, 0%, 0%, 0.6);
+            color: inherit;
+        }
+
+        &.btn-link {
+            border-color: hsla(0, 0%, 0%, 0.6);
+            color: hsl(200, 79%, 66%);
+        }
+
+        &:hover,
+        &:focus,
+        &:active {
+            background-color: hsla(0, 0%, 0%, 0.15);
+        }
+    }
+
     input[type="text"],
     input[type="email"],
     input[type="password"],
@@ -143,7 +161,7 @@ on a dark background, and don't change the dark labels dark either. */
         background-color: transparent;
     }
 
-    .emoji-popover-category-tabs .emoji-popover-tab-item.active {
+    .emoji-info-popover .emoji-popover .emoji-popover-category-tabs .emoji-popover-tab-item.active {
         background-color: hsla(0, 0%, 0%, 0.5);
     }
 
@@ -171,7 +189,6 @@ on a dark background, and don't change the dark labels dark either. */
         box-shadow: 0 0 1px hsl(0, 0%, 98%);
     }
 
-    .new-style .button:not(.save-status):focus,
     input[type="text"]:focus,
     input[type="email"]:focus,
     input[type="number"]:focus,
@@ -183,7 +200,7 @@ on a dark background, and don't change the dark labels dark either. */
 
     .message-header-contents,
     .message_header_private_message .message-header-contents,
-    #tab_list li.active {
+    #tab_bar #tab_list li.active {
         background-color: hsla(0, 0%, 0%, 0.2);
     }
 
@@ -206,17 +223,19 @@ on a dark background, and don't change the dark labels dark either. */
     }
 
     .overlay,
-    #stream_creation_form #stream_creating_indicator:not(:empty),
-    .emoji-popover-emoji:not(.reacted):focus {
+    #subscription_overlay #stream-creation #stream_creation_form #stream_creating_indicator:not(:empty),
+    .emoji-info-popover .emoji-popover .emoji-popover-emoji:not(.reacted):focus {
         background-color: hsla(212, 28%, 8%, 0.75);
     }
 
     .overlay .flex.overlay-content > div,
+    .dropdown-menu.typeahead,
     #settings_page,
     .informational-overlays .overlay-content {
         box-shadow: 0px 0px 30px hsl(212, 32%, 7%);
     }
 
+    .dropdown-menu ul,
     .dropdown .dropdown-menu,
     .popover,
     .popover-title,
@@ -323,17 +342,18 @@ on a dark background, and don't change the dark labels dark either. */
     }
 
     .stream-row.active,
-    .emoji-showcase-container,
-    .emoji-popover-category-tabs,
-    .emoji-popover-top {
+    .emoji-info-popover .emoji-showcase-container,
+    .emoji-info-popover .emoji-popover .emoji-popover-category-tabs,
+    .emoji-info-popover .emoji-popover .emoji-popover-top {
         background-color: hsla(0, 0%, 0%, 0.2);
     }
 
+    thead,
     #searchbox,
     #searchbox_legacy,
-    .drafts-header,
+    .drafts-container .drafts-header,
     .nav > li > a:hover,
-    .subscriptions-header,
+    .subscriptions-container .subscriptions-header,
     .grey-box,
     .white-box,
     .stream-email,
@@ -341,7 +361,7 @@ on a dark background, and don't change the dark labels dark either. */
     #settings_page .form-sidebar .title,
     #settings_page .sidebar li.active,
     #settings_page .sidebar .tab-container,
-    .table-striped tbody tr:nth-child(odd) td,
+    .table-striped tbody tr:nth-child(even) td,
     .table-striped tbody tr:nth-child(odd) th,
     .modal-footer,
     .modal-bg .modal-header {
@@ -349,9 +369,17 @@ on a dark background, and don't change the dark labels dark either. */
         background-color: hsla(0, 0%, 0%, 0.2);
     }
 
+    .table-striped tbody tr:nth-child(odd) td {
+        background-color: hsl(212, 28%, 18%);
+    }
+
     .modal-footer {
-        -webkit-box-shadow: inset 0 1px 0 hsla(0, 0%, 0%, 0.2);
         box-shadow: inset 0 1px 0 hsla(0, 0%, 0%, 0.2);
+    }
+
+    #invite_user_form .modal-footer {
+        // no transperancy prevents overlap issues
+        background-color: hsl(211, 28%, 14%);
     }
 
     .subscriptions-container .right .display-type,
@@ -359,7 +387,7 @@ on a dark background, and don't change the dark labels dark either. */
     .subscriptions-container .left .search-container,
     .subscriptions-container .left,
     .subscriber-list-box,
-    .subscriber-list tr,
+    .subscriber-list-box .subscriber_list_container .subscriber-list tr,
     #subscription_overlay ul.grey-box li,
     #stream_privacy_modal ul.grey-box li,
     #settings_page .sidebar,
@@ -371,7 +399,6 @@ on a dark background, and don't change the dark labels dark either. */
     }
 
     .draft-row .draft-info-box,
-    .private-message .messagebox,
     .message_header_private_message .message-header-contents {
         box-shadow: none;
     }
@@ -390,17 +417,13 @@ on a dark background, and don't change the dark labels dark either. */
         background-color: hsla(8, 78%, 43%, 0.15);
     }
 
-    .user-mention,
-    .user-group-mention {
-        background: -webkit-gradient(linear, left top, left bottom, color-stop(0%, hsla(0, 0%, 0%, 0.1)), color-stop(100%, hsla(0, 0%, 0%, 0.0)));
-        background: -webkit-linear-gradient(top, hsla(0, 0%, 0%, 0.2) 0%, hsla(0, 0%, 0%, 0.1) 100%);
-        background: -o-linear-gradient(top, hsla(0, 0%, 0%, 0.2) 0%, hsla(0, 0%, 0%, 0.1) 100%);
-        background: -ms-linear-gradient(top, hsla(0, 0%, 0%, 0.2) 0%, hsla(0, 0%, 0%, 0.1) 100%);
+    .rendered_markdown .user-mention,
+    .rendered_markdown .user-group-mention {
         background: linear-gradient(to bottom, hsla(0, 0%, 0%, 0.2) 0%, hsla(0, 0%, 0%, 0.1) 100%);
         box-shadow: 0px 0px 0px 1px hsla(0, 0%, 0%, 0.4);
     }
 
-    .user-mention-me :not(.silent) {
+    .rendered_markdown .user-mention-me :not(.silent) {
         background-color: hsla(355, 37%, 31%, 1);
         box-shadow: 0px 0px 0px 1px hsla(330, 40%, 20%, 1);
     }
@@ -439,6 +462,7 @@ on a dark background, and don't change the dark labels dark either. */
     }
 
     .alert-box .alert,
+    .alert-box .stacktrace,
     .alert.alert-error {
         background-color: hsl(318, 12%, 21%);
         color: inherit;
@@ -447,6 +471,34 @@ on a dark background, and don't change the dark labels dark either. */
 
     .alert-box .alert.alert-error::before {
         color: 1px solid hsl(0, 75%, 65%);
+    }
+
+    .alert-box .stacktrace {
+        color: hsl(314, 22%, 85%);
+
+        .expand {
+            color: hsl(318, 14%, 36%);
+        }
+
+        .subtle {
+            color: hsl(314, 19%, 63%);
+        }
+
+        .code-context {
+            color: hsl(314, 27%, 82%);
+            background-color: hsl(312, 7%, 14%);
+            box-shadow:
+                inset 0px 11px 10px -10px hsl(0, 0%, 6%),
+                inset 0px -11px 10px -10px hsl(0, 0%, 6%);
+
+            .line-number {
+                color: hsl(318, 14%, 44%);
+            }
+
+            .focus-line {
+                background-color: hsl(307, 9%, 19%);
+            }
+        }
     }
 
     /* Popover: */
@@ -508,8 +560,9 @@ on a dark background, and don't change the dark labels dark either. */
         stroke: hsl(0, 0%, 100%);
     }
 
-    .history-limited-box {
-        background-color: rgba(0, 0, 0, 0.2);
+    .history-limited-box,
+    .all-messages-search-caution {
+        background-color: hsla(0, 0%, 0%, 0.2);
     }
 
     #feedback_container,
@@ -520,18 +573,21 @@ on a dark background, and don't change the dark labels dark either. */
         color: inherit;
     }
 
+    /* Search highlight used in both topics and rendered_markdown */
     .highlight {
         background-color: hsla(51, 100%, 64%, 0.42);
     }
 
-    .highlight_text_inserted {
-        color: hsl(122, 100%, 81%);
-        background-color: hsla(120, 64%, 95%, 0.3);
-    }
+    .rendered_markdown {
+        .highlight_text_inserted {
+            color: hsl(122, 100%, 81%);
+            background-color: hsla(120, 64%, 95%, 0.3);
+        }
 
-    .highlight_text_deleted {
-        text-decoration: line-through;
-        background-color: hsla(7, 54%, 62%, 0.38);
+        .highlight_text_deleted {
+            text-decoration: line-through;
+            background-color: hsla(7, 54%, 62%, 0.38);
+        }
     }
 
     .sub-unsub-message span::before,
@@ -558,10 +614,6 @@ on a dark background, and don't change the dark labels dark either. */
         border-bottom-color: hsl(211, 16%, 30%) !important;
     }
 
-    .ps__rail-y {
-        background-color: hsl(212, 28%, 18%);
-    }
-
     #bots_lists_navbar .active a {
         color: hsl(0, 0%, 87%);
         background-color: hsl(212, 28%, 18%);
@@ -570,8 +622,41 @@ on a dark background, and don't change the dark labels dark either. */
     }
 
     .searching-for-more-topics img {
-        -webkit-filter: invert(100%);
         filter: invert(100%);
+    }
+
+    .simplebar-track .simplebar-scrollbar::before {
+        background-color: hsl(0, 0%, 100%);
+        box-shadow: 0px 0px 0px 1px hsla(0, 0%, 0%, 0.33);
+    }
+
+    .collapse-settings-btn:hover {
+        color: hsl(200, 79%, 66%);
+    }
+
+    #loading_more_messages_indicator path {
+        fill: hsl(0, 0%, 100%);
+    }
+
+    .small_square_button {
+        &.small_square_check {
+            background-color: hsl(166, 35%, 52%);
+            color: hsl(0, 0%, 90%);
+
+            &:hover {
+                background-color: hsl(156, 30%, 45%);
+                color: hsl(0, 0%, 95%);
+            }
+        }
+
+        &.small_square_x {
+            background-color: hsl(0, 0%, 95%);
+            color: hsl(0, 0%, 42%);
+
+            &:hover {
+                color: hsl(0, 0%, 18%);
+            }
+        }
     }
 }
 

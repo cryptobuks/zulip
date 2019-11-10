@@ -8,7 +8,7 @@ Zulip clients like mobile/desktop apps will want to use the main
 presence endpoint, which returns data for all active users in the
 organization, instead.
 
-`GET {{ api_url }}/v1/users/<email>/presence`
+`GET {{ api_url }}/v1/users/{email}/presence`
 
 See
 [Zulip's developer documentation](https://zulip.readthedocs.io/en/latest/subsystems/presence.html)
@@ -23,10 +23,7 @@ for details on the data model for presence in Zulip.
 
 {tab|curl}
 
-```
-curl {{ api_url }}/v1/users/<email>/presence \
-    -u BOT_EMAIL_ADDRESS:BOT_API_KEY
-```
+{generate_code_example(curl)|/users/{email}/presence:get|example}
 
 {end_tabs}
 
@@ -40,7 +37,7 @@ curl {{ api_url }}/v1/users/<email>/presence \
 
 * `presence`: An object containing the presence details for every type
   of client the user has ever logged into.
-    * `<client_name>` or `aggregated`: the keys for these objects are
+    * `{client_name}` or `aggregated`: the keys for these objects are
       the names of the different clients where this user is logged in,
       like `website`, `ZulipDesktop`, `ZulipTerminal`, or
       `ZulipMobile`. There is also an `aggregated` key, which matches
@@ -55,9 +52,6 @@ curl {{ api_url }}/v1/users/<email>/presence \
           UI; orange/idle means we don't know whether the user is
           actually at their computer or just left the Zulip app open
           on their desktop).
-        * `pushable`: whether the client accepts push notifications or not.
-        * `client`: the name of the client this presence information refers to.
-          Matches the object's key if this isn't the `aggregated` object.
 
 #### Example response
 

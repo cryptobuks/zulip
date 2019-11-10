@@ -16,10 +16,7 @@ in messages and topics.
 
 {tab|curl}
 
-```
-curl {{ api_url }}/v1/realm/filters \
-    -u BOT_EMAIL_ADDRESS:BOT_API_KEY \
-```
+{generate_code_example(curl)|/realm/filters:get|example}
 
 {end_tabs}
 

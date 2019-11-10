@@ -243,13 +243,14 @@ class BugdownMiscTest(ZulipTestCase):
         self.assertEqual(user['email'], hamlet.email)
 
     def test_invalid_katex_path(self) -> None:
-        with self.settings(STATIC_ROOT="/invalid/path"):
+        with self.settings(DEPLOY_ROOT="/nonexistent"):
             with mock.patch('logging.error') as mock_logger:
                 render_tex("random text")
                 mock_logger.assert_called_with("Cannot find KaTeX for latex rendering!")
 
 class BugdownTest(ZulipTestCase):
     def setUp(self) -> None:
+        super().setUp()
         bugdown.clear_state_for_testing()
 
     def assertEqual(self, first: Any, second: Any, msg: str = "") -> None:
@@ -262,8 +263,8 @@ class BugdownTest(ZulipTestCase):
 
     def load_bugdown_tests(self) -> Tuple[Dict[str, Any], List[List[str]]]:
         test_fixtures = {}
-        data_file = open(os.path.join(os.path.dirname(__file__), 'fixtures/markdown_test_cases.json'), 'r')
-        data = ujson.loads('\n'.join(data_file.readlines()))
+        with open(os.path.join(os.path.dirname(__file__), 'fixtures/markdown_test_cases.json'), 'r') as f:
+            data = ujson.loads('\n'.join(f.readlines()))
         for test in data['regular_tests']:
             test_fixtures[test['name']] = test
 
@@ -303,7 +304,6 @@ class BugdownTest(ZulipTestCase):
                 converted = bugdown_convert(test['input'])
 
             with self.subTest(markdown_test_case=name):
-                print("Running Bugdown test %s" % (name,))
                 self.assertEqual(converted, test['expected_output'])
 
         def replaced(payload: str, url: str, phrase: str='') -> str:
@@ -355,6 +355,27 @@ class BugdownTest(ZulipTestCase):
 
         self.assertEqual(converted, '<p><a href="http://www.youtube.com/watch?v=hx1mjT73xYE" target="_blank" title="http://www.youtube.com/watch?v=hx1mjT73xYE">http://www.youtube.com/watch?v=hx1mjT73xYE</a></p>\n<div class="youtube-video message_inline_image"><a data-id="hx1mjT73xYE" href="http://www.youtube.com/watch?v=hx1mjT73xYE" target="_blank" title="http://www.youtube.com/watch?v=hx1mjT73xYE"><img src="https://i.ytimg.com/vi/hx1mjT73xYE/default.jpg"></a></div>')
 
+        msg = 'https://youtu.be/hx1mjT73xYE'
+        converted = bugdown_convert(msg)
+
+        self.assertEqual(converted, '<p><a href="https://youtu.be/hx1mjT73xYE" target="_blank" title="https://youtu.be/hx1mjT73xYE">https://youtu.be/hx1mjT73xYE</a></p>\n<div class="youtube-video message_inline_image"><a data-id="hx1mjT73xYE" href="https://youtu.be/hx1mjT73xYE" target="_blank" title="https://youtu.be/hx1mjT73xYE"><img src="https://i.ytimg.com/vi/hx1mjT73xYE/default.jpg"></a></div>')
+
+        msg = 'https://www.youtube.com/playlist?list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo'
+        not_converted = bugdown_convert(msg)
+
+        self.assertEqual(not_converted, '<p><a href="https://www.youtube.com/playlist?list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo" target="_blank" title="https://www.youtube.com/playlist?list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo">https://www.youtube.com/playlist?list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo</a></p>')
+
+        msg = 'https://www.youtube.com/playlist?v=O5nskjZ_GoI&list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo'
+        converted = bugdown_convert(msg)
+
+        self.assertEqual(converted, '<p><a href="https://www.youtube.com/playlist?v=O5nskjZ_GoI&amp;list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo" target="_blank" title="https://www.youtube.com/playlist?v=O5nskjZ_GoI&amp;list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo">https://www.youtube.com/playlist?v=O5nskjZ_GoI&amp;list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo</a></p>\n<div class="youtube-video message_inline_image"><a data-id="O5nskjZ_GoI" href="https://www.youtube.com/playlist?v=O5nskjZ_GoI&amp;list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo" target="_blank" title="https://www.youtube.com/playlist?v=O5nskjZ_GoI&amp;list=PL8dPuuaLjXtNlUrzyH5r6jN9ulIgZBpdo"><img src="https://i.ytimg.com/vi/O5nskjZ_GoI/default.jpg"></a></div>')
+
+        msg = 'http://www.youtube.com/watch_videos?video_ids=nOJgD4fcZhI,i96UO8-GFvw'
+        converted = bugdown_convert(msg)
+
+        self.assertEqual(converted, '<p><a href="http://www.youtube.com/watch_videos?video_ids=nOJgD4fcZhI,i96UO8-GFvw" target="_blank" title="http://www.youtube.com/watch_videos?video_ids=nOJgD4fcZhI,i96UO8-GFvw">http://www.youtube.com/watch_videos?video_ids=nOJgD4fcZhI,i96UO8-GFvw</a></p>\n<div class="youtube-video message_inline_image"><a data-id="nOJgD4fcZhI" href="http://www.youtube.com/watch_videos?video_ids=nOJgD4fcZhI,i96UO8-GFvw" target="_blank" title="http://www.youtube.com/watch_videos?video_ids=nOJgD4fcZhI,i96UO8-GFvw"><img src="https://i.ytimg.com/vi/nOJgD4fcZhI/default.jpg"></a></div>')
+
+    @override_settings(INLINE_URL_EMBED_PREVIEW=False)
     def test_inline_vimeo(self) -> None:
         msg = 'Check out the debate: https://vimeo.com/246979354'
         converted = bugdown_convert(msg)
@@ -367,10 +388,12 @@ class BugdownTest(ZulipTestCase):
         self.assertEqual(converted, '<p><a href="https://vimeo.com/246979354" target="_blank" title="https://vimeo.com/246979354">https://vimeo.com/246979354</a></p>')
 
     @override_settings(INLINE_IMAGE_PREVIEW=True)
-    def test_inline_image_thumbnail_url(self):
-        # type: () -> None
-        msg = '[foobar](/user_uploads/2/50/w2G6ok9kr8AMCQCTNAUOFMln/IMG_0677.JPG)'
-        thumbnail_img = '<img data-src-fullsize="/thumbnail?url=user_uploads%2F2%2F50%2Fw2G6ok9kr8AMCQCTNAUOFMln%2FIMG_0677.JPG&amp;size=full" src="/thumbnail?url=user_uploads%2F2%2F50%2Fw2G6ok9kr8AMCQCTNAUOFMln%2FIMG_0677.JPG&amp;size=thumbnail"><'
+    def test_inline_image_thumbnail_url(self) -> None:
+        realm = get_realm("zephyr")
+        msg = '[foobar](/user_uploads/{realm_id}/50/w2G6ok9kr8AMCQCTNAUOFMln/IMG_0677.JPG)'
+        msg = msg.format(realm_id=realm.id)
+        thumbnail_img = '<img data-src-fullsize="/thumbnail?url=user_uploads%2F{realm_id}%2F50%2Fw2G6ok9kr8AMCQCTNAUOFMln%2FIMG_0677.JPG&amp;size=full" src="/thumbnail?url=user_uploads%2F{realm_id}%2F50%2Fw2G6ok9kr8AMCQCTNAUOFMln%2FIMG_0677.JPG&amp;size=thumbnail"><'
+        thumbnail_img = thumbnail_img.format(realm_id=realm.id)
         converted = bugdown_convert(msg)
         self.assertIn(thumbnail_img, converted)
 
@@ -397,14 +420,15 @@ class BugdownTest(ZulipTestCase):
         converted = bugdown_convert(msg)
         self.assertIn(thumbnail_img, converted)
 
-        msg = '[foobar](/user_avatars/2/emoji/images/50.png)'
-        thumbnail_img = '<div class="message_inline_image"><a href="/user_avatars/2/emoji/images/50.png" target="_blank" title="foobar"><img src="/user_avatars/2/emoji/images/50.png"></a></div>'
+        msg = '[foobar](/user_avatars/{realm_id}/emoji/images/50.png)'
+        msg = msg.format(realm_id=realm.id)
+        thumbnail_img = '<div class="message_inline_image"><a href="/user_avatars/{realm_id}/emoji/images/50.png" target="_blank" title="foobar"><img src="/user_avatars/{realm_id}/emoji/images/50.png"></a></div>'
+        thumbnail_img = thumbnail_img.format(realm_id=realm.id)
         converted = bugdown_convert(msg)
         self.assertIn(thumbnail_img, converted)
 
     @override_settings(INLINE_IMAGE_PREVIEW=True)
-    def test_inline_image_preview(self):
-        # type: () -> None
+    def test_inline_image_preview(self) -> None:
         with_preview = '<div class="message_inline_image"><a href="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg" target="_blank" title="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fcdn.wallpapersafari.com%2F13%2F6%2F16eVjx.jpeg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fcdn.wallpapersafari.com%2F13%2F6%2F16eVjx.jpeg&amp;size=thumbnail"></a></div>'
         without_preview = '<p><a href="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg" target="_blank" title="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg">http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg</a></p>'
         content = 'http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg'
@@ -424,7 +448,31 @@ class BugdownTest(ZulipTestCase):
         self.assertEqual(converted, without_preview)
 
     @override_settings(INLINE_IMAGE_PREVIEW=True)
+    def test_inline_image_quoted_blocks(self) -> None:
+        content = 'http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg'
+        expected = '<div class="message_inline_image"><a href="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg" target="_blank" title="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fcdn.wallpapersafari.com%2F13%2F6%2F16eVjx.jpeg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fcdn.wallpapersafari.com%2F13%2F6%2F16eVjx.jpeg&amp;size=thumbnail"></a></div>'
+        sender_user_profile = self.example_user('othello')
+        msg = Message(sender=sender_user_profile, sending_client=get_client("test"))
+        converted = render_markdown(msg, content)
+        self.assertEqual(converted, expected)
+
+        content = '>http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg\n\nAwesome!'
+        expected = '<blockquote>\n<p><a href="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg" target="_blank" title="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg">http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg</a></p>\n</blockquote>\n<p>Awesome!</p>'
+        sender_user_profile = self.example_user('othello')
+        msg = Message(sender=sender_user_profile, sending_client=get_client("test"))
+        converted = render_markdown(msg, content)
+        self.assertEqual(converted, expected)
+
+        content = '>* http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg\n\nAwesome!'
+        expected = '<blockquote>\n<ul>\n<li><a href="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg" target="_blank" title="http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg">http://cdn.wallpapersafari.com/13/6/16eVjx.jpeg</a></li>\n</ul>\n</blockquote>\n<p>Awesome!</p>'
+        sender_user_profile = self.example_user('othello')
+        msg = Message(sender=sender_user_profile, sending_client=get_client("test"))
+        converted = render_markdown(msg, content)
+        self.assertEqual(converted, expected)
+
+    @override_settings(INLINE_IMAGE_PREVIEW=True)
     def test_inline_image_preview_order(self) -> None:
+        realm = get_realm("zulip")
         content = 'http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg\nhttp://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg\nhttp://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg'
         expected = '<p><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg">http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg</a><br>\n<a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg">http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg</a><br>\n<a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg">http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg</a></p>\n<div class="message_inline_image"><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_01.jpg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_01.jpg&amp;size=thumbnail"></a></div><div class="message_inline_image"><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_02.jpg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_02.jpg&amp;size=thumbnail"></a></div><div class="message_inline_image"><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_03.jpg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_03.jpg&amp;size=thumbnail"></a></div>'
 
@@ -434,15 +482,17 @@ class BugdownTest(ZulipTestCase):
         self.assertEqual(converted, expected)
 
         content = 'http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg\n\n>http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg\n\n* http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg\n* https://www.google.com/images/srpr/logo4w.png'
-        expected = '<div class="message_inline_image"><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_01.jpg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_01.jpg&amp;size=thumbnail"></a></div><blockquote>\n<div class="message_inline_image"><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_02.jpg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_02.jpg&amp;size=thumbnail"></a></div></blockquote>\n<ul>\n<li><div class="message_inline_image"><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_03.jpg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_03.jpg&amp;size=thumbnail"></a></div></li>\n<li><div class="message_inline_image"><a href="https://www.google.com/images/srpr/logo4w.png" target="_blank" title="https://www.google.com/images/srpr/logo4w.png"><img data-src-fullsize="/thumbnail?url=https%3A%2F%2Fwww.google.com%2Fimages%2Fsrpr%2Flogo4w.png&amp;size=full" src="/thumbnail?url=https%3A%2F%2Fwww.google.com%2Fimages%2Fsrpr%2Flogo4w.png&amp;size=thumbnail"></a></div></li>\n</ul>'
+        expected = '<div class="message_inline_image"><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_01.jpg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_01.jpg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_01.jpg&amp;size=thumbnail"></a></div><blockquote>\n<p><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg">http://imaging.nikon.com/lineup/dslr/df/img/sample/img_02.jpg</a></p>\n</blockquote>\n<ul>\n<li><div class="message_inline_image"><a href="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg" target="_blank" title="http://imaging.nikon.com/lineup/dslr/df/img/sample/img_03.jpg"><img data-src-fullsize="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_03.jpg&amp;size=full" src="/thumbnail?url=http%3A%2F%2Fimaging.nikon.com%2Flineup%2Fdslr%2Fdf%2Fimg%2Fsample%2Fimg_03.jpg&amp;size=thumbnail"></a></div></li>\n<li><div class="message_inline_image"><a href="https://www.google.com/images/srpr/logo4w.png" target="_blank" title="https://www.google.com/images/srpr/logo4w.png"><img data-src-fullsize="/thumbnail?url=https%3A%2F%2Fwww.google.com%2Fimages%2Fsrpr%2Flogo4w.png&amp;size=full" src="/thumbnail?url=https%3A%2F%2Fwww.google.com%2Fimages%2Fsrpr%2Flogo4w.png&amp;size=thumbnail"></a></div></li>\n</ul>'
 
         sender_user_profile = self.example_user('othello')
         msg = Message(sender=sender_user_profile, sending_client=get_client("test"))
         converted = render_markdown(msg, content)
         self.assertEqual(converted, expected)
 
-        content = 'Test 1\n[21136101110_1dde1c1a7e_o.jpg](/user_uploads/1/6d/F1PX6u16JA2P-nK45PyxHIYZ/21136101110_1dde1c1a7e_o.jpg) \n\nNext Image\n[IMG_20161116_023910.jpg](/user_uploads/1/69/sh7L06e7uH7NaX6d5WFfVYQp/IMG_20161116_023910.jpg) \n\nAnother Screenshot\n[Screenshot-from-2016-06-01-16-22-42.png](/user_uploads/1/70/_aZmIEWaN1iUaxwkDjkO7bpj/Screenshot-from-2016-06-01-16-22-42.png)'
-        expected = '<p>Test 1<br>\n<a href="/user_uploads/1/6d/F1PX6u16JA2P-nK45PyxHIYZ/21136101110_1dde1c1a7e_o.jpg" target="_blank" title="21136101110_1dde1c1a7e_o.jpg">21136101110_1dde1c1a7e_o.jpg</a> </p>\n<div class="message_inline_image"><a href="/user_uploads/1/6d/F1PX6u16JA2P-nK45PyxHIYZ/21136101110_1dde1c1a7e_o.jpg" target="_blank" title="21136101110_1dde1c1a7e_o.jpg"><img data-src-fullsize="/thumbnail?url=user_uploads%2F1%2F6d%2FF1PX6u16JA2P-nK45PyxHIYZ%2F21136101110_1dde1c1a7e_o.jpg&amp;size=full" src="/thumbnail?url=user_uploads%2F1%2F6d%2FF1PX6u16JA2P-nK45PyxHIYZ%2F21136101110_1dde1c1a7e_o.jpg&amp;size=thumbnail"></a></div><p>Next Image<br>\n<a href="/user_uploads/1/69/sh7L06e7uH7NaX6d5WFfVYQp/IMG_20161116_023910.jpg" target="_blank" title="IMG_20161116_023910.jpg">IMG_20161116_023910.jpg</a> </p>\n<div class="message_inline_image"><a href="/user_uploads/1/69/sh7L06e7uH7NaX6d5WFfVYQp/IMG_20161116_023910.jpg" target="_blank" title="IMG_20161116_023910.jpg"><img data-src-fullsize="/thumbnail?url=user_uploads%2F1%2F69%2Fsh7L06e7uH7NaX6d5WFfVYQp%2FIMG_20161116_023910.jpg&amp;size=full" src="/thumbnail?url=user_uploads%2F1%2F69%2Fsh7L06e7uH7NaX6d5WFfVYQp%2FIMG_20161116_023910.jpg&amp;size=thumbnail"></a></div><p>Another Screenshot<br>\n<a href="/user_uploads/1/70/_aZmIEWaN1iUaxwkDjkO7bpj/Screenshot-from-2016-06-01-16-22-42.png" target="_blank" title="Screenshot-from-2016-06-01-16-22-42.png">Screenshot-from-2016-06-01-16-22-42.png</a></p>\n<div class="message_inline_image"><a href="/user_uploads/1/70/_aZmIEWaN1iUaxwkDjkO7bpj/Screenshot-from-2016-06-01-16-22-42.png" target="_blank" title="Screenshot-from-2016-06-01-16-22-42.png"><img data-src-fullsize="/thumbnail?url=user_uploads%2F1%2F70%2F_aZmIEWaN1iUaxwkDjkO7bpj%2FScreenshot-from-2016-06-01-16-22-42.png&amp;size=full" src="/thumbnail?url=user_uploads%2F1%2F70%2F_aZmIEWaN1iUaxwkDjkO7bpj%2FScreenshot-from-2016-06-01-16-22-42.png&amp;size=thumbnail"></a></div>'
+        content = 'Test 1\n[21136101110_1dde1c1a7e_o.jpg](/user_uploads/{realm_id}/6d/F1PX6u16JA2P-nK45PyxHIYZ/21136101110_1dde1c1a7e_o.jpg) \n\nNext Image\n[IMG_20161116_023910.jpg](/user_uploads/{realm_id}/69/sh7L06e7uH7NaX6d5WFfVYQp/IMG_20161116_023910.jpg) \n\nAnother Screenshot\n[Screenshot-from-2016-06-01-16-22-42.png](/user_uploads/{realm_id}/70/_aZmIEWaN1iUaxwkDjkO7bpj/Screenshot-from-2016-06-01-16-22-42.png)'
+        content = content.format(realm_id=realm.id)
+        expected = '<p>Test 1<br>\n<a href="/user_uploads/{realm_id}/6d/F1PX6u16JA2P-nK45PyxHIYZ/21136101110_1dde1c1a7e_o.jpg" target="_blank" title="21136101110_1dde1c1a7e_o.jpg">21136101110_1dde1c1a7e_o.jpg</a> </p>\n<div class="message_inline_image"><a href="/user_uploads/{realm_id}/6d/F1PX6u16JA2P-nK45PyxHIYZ/21136101110_1dde1c1a7e_o.jpg" target="_blank" title="21136101110_1dde1c1a7e_o.jpg"><img data-src-fullsize="/thumbnail?url=user_uploads%2F{realm_id}%2F6d%2FF1PX6u16JA2P-nK45PyxHIYZ%2F21136101110_1dde1c1a7e_o.jpg&amp;size=full" src="/thumbnail?url=user_uploads%2F{realm_id}%2F6d%2FF1PX6u16JA2P-nK45PyxHIYZ%2F21136101110_1dde1c1a7e_o.jpg&amp;size=thumbnail"></a></div><p>Next Image<br>\n<a href="/user_uploads/{realm_id}/69/sh7L06e7uH7NaX6d5WFfVYQp/IMG_20161116_023910.jpg" target="_blank" title="IMG_20161116_023910.jpg">IMG_20161116_023910.jpg</a> </p>\n<div class="message_inline_image"><a href="/user_uploads/{realm_id}/69/sh7L06e7uH7NaX6d5WFfVYQp/IMG_20161116_023910.jpg" target="_blank" title="IMG_20161116_023910.jpg"><img data-src-fullsize="/thumbnail?url=user_uploads%2F{realm_id}%2F69%2Fsh7L06e7uH7NaX6d5WFfVYQp%2FIMG_20161116_023910.jpg&amp;size=full" src="/thumbnail?url=user_uploads%2F{realm_id}%2F69%2Fsh7L06e7uH7NaX6d5WFfVYQp%2FIMG_20161116_023910.jpg&amp;size=thumbnail"></a></div><p>Another Screenshot<br>\n<a href="/user_uploads/{realm_id}/70/_aZmIEWaN1iUaxwkDjkO7bpj/Screenshot-from-2016-06-01-16-22-42.png" target="_blank" title="Screenshot-from-2016-06-01-16-22-42.png">Screenshot-from-2016-06-01-16-22-42.png</a></p>\n<div class="message_inline_image"><a href="/user_uploads/{realm_id}/70/_aZmIEWaN1iUaxwkDjkO7bpj/Screenshot-from-2016-06-01-16-22-42.png" target="_blank" title="Screenshot-from-2016-06-01-16-22-42.png"><img data-src-fullsize="/thumbnail?url=user_uploads%2F{realm_id}%2F70%2F_aZmIEWaN1iUaxwkDjkO7bpj%2FScreenshot-from-2016-06-01-16-22-42.png&amp;size=full" src="/thumbnail?url=user_uploads%2F{realm_id}%2F70%2F_aZmIEWaN1iUaxwkDjkO7bpj%2FScreenshot-from-2016-06-01-16-22-42.png&amp;size=thumbnail"></a></div>'
+        expected = expected.format(realm_id=realm.id)
 
         msg = Message(sender=sender_user_profile, sending_client=get_client("test"))
         converted = render_markdown(msg, content)
@@ -494,6 +544,8 @@ class BugdownTest(ZulipTestCase):
         sender_user_profile = self.example_user('othello')
         message = copy.deepcopy(Message(sender=sender_user_profile, sending_client=get_client("test")))
         realm = message.get_realm()
+        realm.inline_url_embed_preview = True  # off by default
+        realm.save(update_fields=['inline_url_embed_preview'])
 
         ret = bugdown.url_embed_preview_enabled()
         self.assertEqual(ret, False)
@@ -613,25 +665,25 @@ class BugdownTest(ZulipTestCase):
 
         msg = 'http://www.twitter.com'
         converted = bugdown_convert(msg)
-        self.assertEqual(converted, '<p>%s</p>' % make_link('http://www.twitter.com'))
+        self.assertEqual(converted, '<p>%s</p>' % (make_link('http://www.twitter.com'),))
 
         msg = 'http://www.twitter.com/wdaher/'
         converted = bugdown_convert(msg)
-        self.assertEqual(converted, '<p>%s</p>' % make_link('http://www.twitter.com/wdaher/'))
+        self.assertEqual(converted, '<p>%s</p>' % (make_link('http://www.twitter.com/wdaher/'),))
 
         msg = 'http://www.twitter.com/wdaher/status/3'
         converted = bugdown_convert(msg)
-        self.assertEqual(converted, '<p>%s</p>' % make_link('http://www.twitter.com/wdaher/status/3'))
+        self.assertEqual(converted, '<p>%s</p>' % (make_link('http://www.twitter.com/wdaher/status/3'),))
 
         # id too long
         msg = 'http://www.twitter.com/wdaher/status/2879779692873154569'
         converted = bugdown_convert(msg)
-        self.assertEqual(converted, '<p>%s</p>' % make_link('http://www.twitter.com/wdaher/status/2879779692873154569'))
+        self.assertEqual(converted, '<p>%s</p>' % (make_link('http://www.twitter.com/wdaher/status/2879779692873154569'),))
 
         # id too large (i.e. tweet doesn't exist)
         msg = 'http://www.twitter.com/wdaher/status/999999999999999999'
         converted = bugdown_convert(msg)
-        self.assertEqual(converted, '<p>%s</p>' % make_link('http://www.twitter.com/wdaher/status/999999999999999999'))
+        self.assertEqual(converted, '<p>%s</p>' % (make_link('http://www.twitter.com/wdaher/status/999999999999999999'),))
 
         msg = 'http://www.twitter.com/wdaher/status/287977969287315456'
         converted = bugdown_convert(msg)
@@ -651,20 +703,34 @@ class BugdownTest(ZulipTestCase):
             make_link('http://twitter.com/wdaher/status/287977969287315456'),
             make_inline_twitter_preview('http://twitter.com/wdaher/status/287977969287315456', normal_tweet_html)))
 
-        # A max of 3 will be converted
+        # Repeated links will only be converted once
         msg = ('http://twitter.com/wdaher/status/287977969287315456 '
                'http://twitter.com/wdaher/status/287977969287315457 '
                'http://twitter.com/wdaher/status/287977969287315457 '
                'http://twitter.com/wdaher/status/287977969287315457')
         converted = bugdown_convert(msg)
-        self.assertEqual(converted, '<p>%s %s %s %s</p>\n%s%s%s' % (
+        self.assertEqual(converted, '<p>%s %s %s %s</p>\n%s%s' % (
             make_link('http://twitter.com/wdaher/status/287977969287315456'),
             make_link('http://twitter.com/wdaher/status/287977969287315457'),
             make_link('http://twitter.com/wdaher/status/287977969287315457'),
             make_link('http://twitter.com/wdaher/status/287977969287315457'),
             make_inline_twitter_preview('http://twitter.com/wdaher/status/287977969287315456', normal_tweet_html),
-            make_inline_twitter_preview('http://twitter.com/wdaher/status/287977969287315457', normal_tweet_html),
             make_inline_twitter_preview('http://twitter.com/wdaher/status/287977969287315457', normal_tweet_html)))
+
+        # A max of 3 will be converted
+        msg = ('http://twitter.com/wdaher/status/287977969287315456 '
+               'http://twitter.com/wdaher/status/287977969287315457 '
+               'https://twitter.com/wdaher/status/287977969287315456 '
+               'http://twitter.com/wdaher/status/287977969287315460')
+        converted = bugdown_convert(msg)
+        self.assertEqual(converted, '<p>%s %s %s %s</p>\n%s%s%s' % (
+            make_link('http://twitter.com/wdaher/status/287977969287315456'),
+            make_link('http://twitter.com/wdaher/status/287977969287315457'),
+            make_link('https://twitter.com/wdaher/status/287977969287315456'),
+            make_link('http://twitter.com/wdaher/status/287977969287315460'),
+            make_inline_twitter_preview('http://twitter.com/wdaher/status/287977969287315456', normal_tweet_html),
+            make_inline_twitter_preview('http://twitter.com/wdaher/status/287977969287315457', normal_tweet_html),
+            make_inline_twitter_preview('https://twitter.com/wdaher/status/287977969287315456', normal_tweet_html)))
 
         # Tweet has a mention in a URL, only the URL is linked
         msg = 'http://twitter.com/wdaher/status/287977969287315458'
@@ -721,7 +787,7 @@ class BugdownTest(ZulipTestCase):
         realm_emoji = RealmEmoji.objects.filter(realm=realm,
                                                 name='green_tick',
                                                 deactivated=False).get()
-        self.assertEqual(converted, '<p>%s</p>' % (emoji_img(':green_tick:', realm_emoji.file_name, realm.id)))
+        self.assertEqual(converted, '<p>%s</p>' % (emoji_img(':green_tick:', realm_emoji.file_name, realm.id),))
 
         # Deactivate realm emoji.
         do_remove_realm_emoji(realm, 'green_tick')
@@ -764,6 +830,30 @@ class BugdownTest(ZulipTestCase):
         converted = bugdown_convert(msg)
         self.assertEqual(converted, unicode_converted)
 
+    def test_links_in_topic_name(self) -> None:
+        realm = get_realm('zulip')
+        msg = Message(sender=self.example_user('othello'))
+
+        msg.set_topic_name("https://google.com/hello-world")
+        converted_topic = bugdown.topic_links(realm.id, msg.topic_name())
+        self.assertEqual(converted_topic, [u'https://google.com/hello-world'])
+
+        msg.set_topic_name("http://google.com/hello-world")
+        converted_topic = bugdown.topic_links(realm.id, msg.topic_name())
+        self.assertEqual(converted_topic, [u'http://google.com/hello-world'])
+
+        msg.set_topic_name("Without scheme google.com/hello-world")
+        converted_topic = bugdown.topic_links(realm.id, msg.topic_name())
+        self.assertEqual(converted_topic, [u'https://google.com/hello-world'])
+
+        msg.set_topic_name("Without scheme random.words/hello-world")
+        converted_topic = bugdown.topic_links(realm.id, msg.topic_name())
+        self.assertEqual(converted_topic, [])
+
+        msg.set_topic_name("Try out http://ftp.debian.org, https://google.com/ and https://google.in/.")
+        converted_topic = bugdown.topic_links(realm.id, msg.topic_name())
+        self.assertEqual(converted_topic, [u'http://ftp.debian.org', 'https://google.com/', 'https://google.in/'])
+
     def test_realm_patterns(self) -> None:
         realm = get_realm('zulip')
         url_format_string = r"https://trac.zulip.net/ticket/%(id)s"
@@ -787,6 +877,10 @@ class BugdownTest(ZulipTestCase):
 
         self.assertEqual(converted, '<p>We should fix <a href="https://trac.zulip.net/ticket/224" target="_blank" title="https://trac.zulip.net/ticket/224">#224</a> and <a href="https://trac.zulip.net/ticket/115" target="_blank" title="https://trac.zulip.net/ticket/115">#115</a>, but not issue#124 or #1124z or <a href="https://trac.zulip.net/ticket/16" target="_blank" title="https://trac.zulip.net/ticket/16">trac #15</a> today.</p>')
         self.assertEqual(converted_topic, [u'https://trac.zulip.net/ticket/444'])
+
+        msg.set_topic_name("#444 https://google.com")
+        converted_topic = bugdown.topic_links(realm.id, msg.topic_name())
+        self.assertEqual(converted_topic, [u'https://trac.zulip.net/ticket/444', u'https://google.com'])
 
         RealmFilter(realm=realm, pattern=r'#(?P<id>[a-zA-Z]+-[0-9]+)',
                     url_format_string=r'https://trac.zulip.net/ticket/%(id)s').save()
@@ -919,7 +1013,7 @@ class BugdownTest(ZulipTestCase):
             rendered_content,
             '<p>/me writes a second line<br>\nline</p>'
         )
-        self.assertFalse(Message.is_status_message(content, rendered_content))
+        self.assertTrue(Message.is_status_message(content, rendered_content))
 
     def test_alert_words(self) -> None:
         user_profile = self.example_user('othello')
@@ -1233,7 +1327,7 @@ class BugdownTest(ZulipTestCase):
         self.assertEqual(render_markdown(msg, content),
                          '<p><span class="user-mention" '
                          'data-user-id="%s">'
-                         '@King Hamlet</span></p>' % (user_id))
+                         '@King Hamlet</span></p>' % (user_id,))
         self.assertEqual(msg.mentions_user_ids, set([user_profile.id]))
 
     def test_mention_silent(self) -> None:
@@ -1246,7 +1340,7 @@ class BugdownTest(ZulipTestCase):
         self.assertEqual(render_markdown(msg, content),
                          '<p><span class="user-mention silent" '
                          'data-user-id="%s">'
-                         'King Hamlet</span></p>' % (user_id))
+                         'King Hamlet</span></p>' % (user_id,))
         self.assertEqual(msg.mentions_user_ids, set())
 
     def test_possible_mentions(self) -> None:
@@ -1303,7 +1397,7 @@ class BugdownTest(ZulipTestCase):
         # Both fenced quote and > quote should be identical for both silent and regular syntax.
         expected = ('<blockquote>\n<p>'
                     '<span class="user-mention silent" data-user-id="%s">King Hamlet</span>'
-                    '</p>\n</blockquote>' % (hamlet.id))
+                    '</p>\n</blockquote>' % (hamlet.id,))
         content = "```quote\n@**King Hamlet**\n```"
         self.assertEqual(render_markdown(msg, content), expected)
         self.assertEqual(msg.mentions_user_ids, set())
@@ -1481,6 +1575,35 @@ class BugdownTest(ZulipTestCase):
         self.assertEqual(
             render_markdown(msg, content),
             '<p>#<strong>casesens</strong></p>')
+
+    def test_topic_single(self) -> None:
+        denmark = get_stream('Denmark', get_realm('zulip'))
+        sender_user_profile = self.example_user('othello')
+        msg = Message(sender=sender_user_profile, sending_client=get_client("test"))
+        content = "#**Denmark>some topic**"
+        self.assertEqual(
+            render_markdown(msg, content),
+            '<p><a class="stream-topic" data-stream-id="{d.id}" href="/#narrow/stream/{d.id}-Denmark/topic/some.20topic">#{d.name} &gt; some topic</a></p>'.format(
+                d=denmark
+            ))
+
+    def test_topic_multiple(self) -> None:
+        denmark = get_stream('Denmark', get_realm('zulip'))
+        scotland = get_stream('Scotland', get_realm('zulip'))
+        sender_user_profile = self.example_user('othello')
+        msg = Message(sender=sender_user_profile, sending_client=get_client("test"))
+        content = "This has two links: #**Denmark>some topic** and #**Scotland>other topic**."
+        self.assertEqual(
+            render_markdown(msg, content),
+            '<p>This has two links: '
+            '<a class="stream-topic" data-stream-id="{denmark.id}" '
+            'href="/#narrow/stream/{denmark.id}-{denmark.name}/topic/some.20topic">'
+            '#{denmark.name} &gt; some topic</a>'
+            ' and '
+            '<a class="stream-topic" data-stream-id="{scotland.id}" '
+            'href="/#narrow/stream/{scotland.id}-{scotland.name}/topic/other.20topic">'
+            '#{scotland.name} &gt; other topic</a>'
+            '.</p>'.format(denmark=denmark, scotland=scotland))
 
     def test_possible_stream_names(self) -> None:
         content = '''#**test here**
@@ -1689,6 +1812,50 @@ class BugdownErrorTests(ZulipTestCase):
             with self.assertRaises(BugdownRenderingException):
                 bugdown_convert(msg)
 
+    def test_curl_code_block_validation(self) -> None:
+        processor = bugdown.fenced_code.FencedBlockPreprocessor(None)
+        processor.run_content_validators = True
+
+        # Simulate code formatting.
+        processor.format_code = lambda lang, code: lang + ':' + code  # type: ignore # mypy doesn't allow monkey-patching functions
+        processor.placeholder = lambda s: '**' + s.strip('\n') + '**'  # type: ignore # https://github.com/python/mypy/issues/708
+
+        markdown = [
+            '``` curl',
+            'curl {{ api_url }}/v1/register',
+            '    -u BOT_EMAIL_ADDRESS:BOT_API_KEY',
+            '    -d "queue_id=1375801870:2942"',
+            '```',
+        ]
+
+        with self.assertRaises(BugdownRenderingException):
+            processor.run(markdown)
+
+    def test_curl_code_block_without_validation(self) -> None:
+        processor = bugdown.fenced_code.FencedBlockPreprocessor(None)
+
+        # Simulate code formatting.
+        processor.format_code = lambda lang, code: lang + ':' + code  # type: ignore # mypy doesn't allow monkey-patching functions
+        processor.placeholder = lambda s: '**' + s.strip('\n') + '**'  # type: ignore # https://github.com/python/mypy/issues/708
+
+        markdown = [
+            '``` curl',
+            'curl {{ api_url }}/v1/register',
+            '    -u BOT_EMAIL_ADDRESS:BOT_API_KEY',
+            '    -d "queue_id=1375801870:2942"',
+            '```',
+        ]
+        expected = [
+            '',
+            '**curl:curl {{ api_url }}/v1/register',
+            '    -u BOT_EMAIL_ADDRESS:BOT_API_KEY',
+            '    -d "queue_id=1375801870:2942"**',
+            '',
+            ''
+        ]
+
+        result = processor.run(markdown)
+        self.assertEqual(result, expected)
 
 class BugdownAvatarTestCase(ZulipTestCase):
     def test_possible_avatar_emails(self) -> None:

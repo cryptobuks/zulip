@@ -49,11 +49,19 @@
                     {% endif %}
 
                     {% if google_error %}
-                    {{ render_markdown_path('zerver/google-error.md', {"root_domain_uri": root_domain_uri, "settings_path": settings_path, "secrets_path": secrets_path}) }}
+                        {% if development_environment %}
+                        {{ render_markdown_path('zerver/google-error.md', {"root_domain_uri": root_domain_uri, "settings_path": secrets_path, "secrets_path": secrets_path, "client_id_key_name": "social_auth_google_key"}) }}
+                        {% else %}
+                        {{ render_markdown_path('zerver/google-error.md', {"root_domain_uri": root_domain_uri, "settings_path": settings_path, "secrets_path": secrets_path, "client_id_key_name": "SOCIAL_AUTH_GOOGLE_KEY"}) }}
+                        {% endif %}
                     {% endif %}
 
                     {% if github_error %}
-                    {{ render_markdown_path('zerver/github-error.md', {"root_domain_uri": root_domain_uri, "settings_path": settings_path, "secrets_path": secrets_path}) }}
+                        {% if development_environment %}
+                        {{ render_markdown_path('zerver/github-error.md', {"root_domain_uri": root_domain_uri, "settings_path": secrets_path, "secrets_path": secrets_path, "client_id_key_name": "social_auth_github_key"}) }}
+                        {% else %}
+                        {{ render_markdown_path('zerver/github-error.md', {"root_domain_uri": root_domain_uri, "settings_path": settings_path, "secrets_path": secrets_path, "client_id_key_name": "SOCIAL_AUTH_GITHUB_KEY"}) }}
+                        {% endif %}
                     {% endif %}
 
                     {% if google_error or github_error %}
@@ -72,6 +80,19 @@
                         {% endif %}
                     {% endif %}
 
+                    {% if saml_error %}
+                        <p>
+                            SAML authentication is either not enabled or misconfigured. Have a look at
+                            our <a href="https://zulip.readthedocs.io/en/latest/production/authentication-methods.html#SAML">setup guide</a>.
+                        </p>
+                        {% if development_environment %}
+                        <p>
+                            See also
+                            the <a href="https://zulip.readthedocs.io/en/latest/development/authentication.html#saml">SAML
+                                    guide</a> for the development environment.
+                        </p>
+                        {% endif %}
+                    {% endif %}
                     <p>After making your changes, remember to restart
                     the Zulip server.</p>
                 </div>

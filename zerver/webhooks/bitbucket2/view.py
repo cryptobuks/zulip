@@ -1,6 +1,7 @@
 # Webhooks for external integrations.
 import re
 from functools import partial
+import string
 from typing import Any, Dict, List, Optional
 from inspect import signature
 
@@ -26,8 +27,8 @@ BITBUCKET_FORK_BODY = USER_PART + ' forked the repository into [{fork_name}]({fo
 BITBUCKET_COMMIT_STATUS_CHANGED_BODY = ('[System {key}]({system_url}) changed status of'
                                         ' {commit_info} to {status}.')
 BITBUCKET_REPO_UPDATED_CHANGED = ('{actor} changed the {change} of the **{repo_name}**'
-                                  ' repo from **{old}** to **{new}**\n')
-BITBUCKET_REPO_UPDATED_ADDED = '{actor} changed the {change} of the **{repo_name}** repo to **{new}**\n'
+                                  ' repo from **{old}** to **{new}**')
+BITBUCKET_REPO_UPDATED_ADDED = '{actor} changed the {change} of the **{repo_name}** repo to **{new}**'
 
 PULL_REQUEST_SUPPORTED_ACTIONS = [
     'approved',
@@ -285,7 +286,11 @@ def get_pull_request_created_or_updated_body(payload: Dict[str, Any], action: st
     pull_request = payload['pullrequest']
     assignee = None
     if pull_request.get('reviewers'):
-        assignee = pull_request.get('reviewers')[0]['username']
+        assignee = pull_request.get('reviewers')[0]
+        # Certain payloads may not contain a username, so we
+        # return the user's display name or nickname instead.
+        assignee = (assignee.get('username') or assignee.get('display_name') or
+                    assignee.get('nickname'))
 
     return get_pull_request_event_message(
         get_user_username(payload),
@@ -342,6 +347,12 @@ def get_push_tag_body(payload: Dict[str, Any], change: Dict[str, Any]) -> str:
         action=action
     )
 
+def append_punctuation(title: str, message: str) -> str:
+    if title[-1] not in string.punctuation:
+        message = "{}.".format(message)
+
+    return message
+
 def get_repo_updated_body(payload: Dict[str, Any]) -> str:
     changes = ['website', 'name', 'links', 'language', 'full_name', 'description']
     body = ""
@@ -358,11 +369,13 @@ def get_repo_updated_body(payload: Dict[str, Any]) -> str:
                 actor=actor, change=change, repo_name=repo_name,
                 old=old, new=new
             )
+            message = append_punctuation(new, message) + '\n'
             body += message
         elif new and not old:
             message = BITBUCKET_REPO_UPDATED_ADDED.format(
                 actor=actor, change=change, repo_name=repo_name, new=new
             )
+            message = append_punctuation(new, message) + '\n'
             body += message
 
     return body
@@ -383,7 +396,10 @@ def get_user_display_name(payload: Dict[str, Any]) -> str:
     return payload['actor']['display_name']
 
 def get_user_username(payload: Dict[str, Any]) -> str:
-    return payload['actor']['username']
+    actor = payload['actor']
+    # Certain payloads may not contain a username, so we can
+    # return the user's display name or nickname instead.
+    return actor.get('username') or actor.get('display_name') or actor.get('nickname')
 
 def get_branch_name_for_push_event(payload: Dict[str, Any]) -> Optional[str]:
     change = payload['push']['changes'][-1]

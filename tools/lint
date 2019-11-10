@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import print_function
 from __future__ import absolute_import
-import logging
 import os
 import sys
 import argparse
@@ -10,9 +9,8 @@ import argparse
 from lib import sanity_check
 sanity_check.check_venv(__file__)
 
-from zulint import lister
+from linter_lib.custom_check import python_rules, non_py_rules
 from zulint.command import add_default_linter_arguments, LinterConfig
-from typing import cast, Dict, List
 import random
 
 def run():
@@ -24,19 +22,6 @@ def run():
     parser.add_argument('--full',
                         action='store_true',
                         help='Check some things we typically ignore')
-    parser.add_argument('--no-gitlint',
-                        action='store_true',
-                        help='Disable gitlint')
-    parser.add_argument('--no-mypy',
-                        action='store_true',
-                        help='Disable mypy')
-    limited_tests_group = parser.add_mutually_exclusive_group()
-    limited_tests_group.add_argument('--frontend',
-                                     action='store_true',
-                                     help='Only check files relevant to frontend')
-    limited_tests_group.add_argument('--backend',
-                                     action='store_true',
-                                     help='Only check files relevant to backend')
     add_default_linter_arguments(parser)
     args = parser.parse_args()
 
@@ -44,88 +29,90 @@ def run():
     root_dir = os.path.dirname(tools_dir)
     sys.path.insert(0, root_dir)
 
-    from tools.linter_lib.custom_check import build_custom_checkers
     from tools.linter_lib.exclude import EXCLUDED_FILES, PUPPET_CHECK_RULES_TO_EXCLUDE
     from tools.linter_lib.pyflakes import check_pyflakes
     from tools.linter_lib.pep8 import check_pep8
 
     from tools.lib.test_script import (
-        get_provisioning_status,
+        assert_provisioning_status_ok,
     )
 
     os.chdir(root_dir)
 
-    if not args.force:
-        ok, msg = get_provisioning_status()
-        if not ok:
-            print(msg)
-            print('If you really know what you are doing, use --force to run anyway.')
-            sys.exit(1)
-
-    backend_file_types = ['py', 'sh', 'pp', 'json', 'md', 'txt', 'text', 'yaml', 'rst']
-    frontend_file_types = ['js', 'css', 'scss', 'handlebars', 'html']
-    file_types = backend_file_types + frontend_file_types
-    if args.backend:
-        file_types = backend_file_types
-    if args.frontend:
-        file_types = frontend_file_types
-
-    by_lang = cast(Dict[str, List[str]],
-                   lister.list_files(args.targets, modified_only=args.modified,
-                                     ftypes=file_types,
-                                     use_shebang=True, group_by_ftype=True, exclude=EXCLUDED_FILES))
+    assert_provisioning_status_ok(args.force)
 
     # Invoke the appropriate lint checker for each language,
     # and also check files for extra whitespace.
 
-    logging.basicConfig(format="%(asctime)s %(message)s")
-    logger = logging.getLogger()
-    if args.verbose:
-        logger.setLevel(logging.INFO)
-    else:
-        logger.setLevel(logging.WARNING)
+    linter_config = LinterConfig(args)
 
-    check_custom_checks_py, check_custom_checks_nonpy = build_custom_checkers(by_lang)
+    by_lang = linter_config.list_files(groups={
+        'backend': ['py', 'sh', 'pp', 'json', 'md', 'txt', 'text', 'yaml', 'rst'],
+        'frontend': ['js', 'ts', 'css', 'scss', 'hbs', 'html', 'lock'],
+    }, exclude=EXCLUDED_FILES)
 
-    linter_config = LinterConfig(by_lang)
-    linter_config.external_linter('add_class', ['tools/find-add-class'], ['js'])
-    linter_config.external_linter('css', ['node', 'node_modules/.bin/stylelint'], ['css', 'scss'])
+    linter_config.external_linter('add_class', ['tools/find-add-class'], ['js'],
+                                  description="Compares addClass() between JavaSsript and CSS.")
+    linter_config.external_linter('css', ['node', 'node_modules/.bin/stylelint'], ['css', 'scss'],
+                                  fix_arg='--fix',
+                                  description="Standard CSS style and formatting linter "
+                                  "(config: .stylelintrc)")
     linter_config.external_linter('eslint', ['node', 'node_modules/.bin/eslint',
-                                             '--quiet', '--cache'], ['js'])
-    linter_config.external_linter('tslint', ['node', 'node_modules/.bin/tslint', '-c',
-                                             'static/js/tslint.json'], ['ts'])
-    linter_config.external_linter('puppet', ['puppet', 'parser', 'validate'], ['pp'])
+                                             '--quiet', '--cache', '--ext', '.js,.ts'], ['js', 'ts'],
+                                  fix_arg='--fix',
+                                  description="Standard JavaScript style and formatting linter"
+                                  "(config: .eslintrc).")
+    linter_config.external_linter('puppet', ['puppet', 'parser', 'validate'], ['pp'],
+                                  description="Runs the puppet parser validator, "
+                                  "checking for syntax errors.")
     linter_config.external_linter('puppet-lint',
-                                  ['puppet-lint'] + PUPPET_CHECK_RULES_TO_EXCLUDE, ['pp'])
-    linter_config.external_linter('templates', ['tools/check-templates'], ['handlebars', 'html'])
-    linter_config.external_linter('urls', ['tools/check-urls'], ['py'])
-    linter_config.external_linter('swagger', ['node', 'tools/check-swagger'], ['yaml'])
-    linter_config.external_linter('shellcheck', ['shellcheck', '-x'], ['sh'])
-    if not args.no_mypy:
-        command = ['tools/run-mypy']
-        if args.force:
-            command.append('--force')
-        linter_config.external_linter('mypy', command, ['py'], pass_targets=False)
-
-    # Disabled check for imperative mood until it is stabilized
-    if not args.no_gitlint:
-        linter_config.external_linter('commit_messages', ['tools/commit-message-lint'])
+                                  ['puppet-lint'] + PUPPET_CHECK_RULES_TO_EXCLUDE, ['pp'],
+                                  fix_arg='--fix',
+                                  description="Standard puppet linter"
+                                  "(config: tools/linter_lib/exclude.py)")
+    linter_config.external_linter('templates', ['tools/check-templates'], ['hbs', 'html'],
+                                  description="Custom linter checks whitespace formatting"
+                                  "of HTML templates.",
+                                  fix_arg='--fix')
+    linter_config.external_linter('openapi', ['node', 'tools/check-openapi'], ['yaml'],
+                                  description="Validates our OpenAPI/Swagger API documentation"
+                                  "(zerver/openapi/zulip.yaml) ")
+    linter_config.external_linter('shellcheck', ['shellcheck', '-x'], ['sh'],
+                                  description="Standard shell script linter.")
+    command = ['tools/run-mypy']
+    if args.force:
+        command.append('--force')
+    linter_config.external_linter('mypy', command, ['py'], pass_targets=False,
+                                  description="Static type checker for Python (config: mypy.ini)")
+    linter_config.external_linter('tsc', ['tools/run-tsc'], ['ts'], pass_targets=False,
+                                  description="TypeScript compiler (config: tsconfig.json)")
+    linter_config.external_linter('yarn-deduplicate', ['tools/run-yarn-deduplicate'], ['lock'],
+                                  pass_targets=False,
+                                  description="Shares duplicate packages in yarn.lock")
+    linter_config.external_linter('gitlint', ['tools/commit-message-lint'],
+                                  description="Checks commit messages for common formatting errors."
+                                  "(config: .gitlint)")
 
     @linter_config.lint
     def custom_py():
         # type: () -> int
-        failed = check_custom_checks_py()
+        """Runs custom checks for python files (config: tools/linter_lib/custom_check.py)"""
+        failed = python_rules.check(by_lang, verbose=args.verbose)
         return 1 if failed else 0
 
     @linter_config.lint
     def custom_nonpy():
         # type: () -> int
-        failed = check_custom_checks_nonpy()
+        """Runs custom checks for non-python files (config: tools/linter_lib/custom_check.py)"""
+        failed = False
+        for rule in non_py_rules:
+            failed = failed or rule.check(by_lang, verbose=args.verbose)
         return 1 if failed else 0
 
     @linter_config.lint
     def pyflakes():
         # type: () -> int
+        """Standard Python bug and code smell linter (config: tools/linter_lib/pyflakes.py)"""
         failed = check_pyflakes(by_lang['py'], args)
         return 1 if failed else 0
 
@@ -135,12 +122,14 @@ def run():
     @linter_config.lint
     def pep8_1of2():
         # type: () -> int
+        """Standard Python style linter on 50% of files (config: tools/linter_lib/pep8.py)"""
         failed = check_pep8(list(python_part1))
         return 1 if failed else 0
 
     @linter_config.lint
     def pep8_2of2():
         # type: () -> int
+        """Standard Python style linter on other 50% of files (config: tools/linter_lib/pep8.py)"""
         failed = check_pep8(list(python_part2))
         return 1 if failed else 0
 

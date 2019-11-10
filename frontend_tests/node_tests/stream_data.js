@@ -1,6 +1,7 @@
 set_global('page_params', {
     is_admin: false,
     realm_users: [],
+    is_guest: false,
 });
 
 set_global('$', function () {
@@ -8,6 +9,7 @@ set_global('$', function () {
 
 set_global('blueslip', global.make_zblueslip());
 set_global('document', null);
+set_global('i18n', global.stub_i18n);
 global.stub_out_jquery();
 
 zrequire('color_data');
@@ -23,30 +25,31 @@ zrequire('Filter', 'js/filter');
 zrequire('MessageListData', 'js/message_list_data');
 zrequire('MessageListView', 'js/message_list_view');
 zrequire('message_list');
+zrequire('settings_display', 'js/settings_display');
 
 run_test('basics', () => {
-    var denmark = {
+    const denmark = {
         subscribed: false,
         color: 'blue',
         name: 'Denmark',
         stream_id: 1,
-        in_home_view: false,
+        is_muted: true,
     };
-    var social = {
+    const social = {
         subscribed: true,
         color: 'red',
         name: 'social',
         stream_id: 2,
-        in_home_view: true,
+        is_muted: false,
         invite_only: true,
         is_announcement_only: true,
     };
-    var test = {
+    const test = {
         subscribed: true,
         color: 'yellow',
         name: 'test',
         stream_id: 3,
-        in_home_view: false,
+        is_muted: true,
         invite_only: false,
     };
     stream_data.add_sub('Denmark', denmark);
@@ -78,8 +81,8 @@ run_test('basics', () => {
     assert.equal(stream_data.get_name('denMARK'), 'Denmark');
     assert.equal(stream_data.get_name('unknown Stream'), 'unknown Stream');
 
-    assert(stream_data.in_home_view(social.stream_id));
-    assert(!stream_data.in_home_view(denmark.stream_id));
+    assert(!stream_data.is_muted(social.stream_id));
+    assert(stream_data.is_muted(denmark.stream_id));
 
     assert.equal(stream_data.maybe_get_stream_name(), undefined);
     assert.equal(stream_data.maybe_get_stream_name(social.stream_id), 'social');
@@ -93,8 +96,8 @@ run_test('basics', () => {
 
 run_test('renames', () => {
     stream_data.clear_subscriptions();
-    var id = 42;
-    var sub = {
+    const id = 42;
+    let sub = {
         name: 'Denmark',
         subscribed: true,
         color: 'red',
@@ -117,15 +120,15 @@ run_test('renames', () => {
     sub = stream_data.get_sub_by_name('Denmark');
     assert.equal(sub.name, 'Sweden');
 
-    var actual_id = stream_data.get_stream_id('Denmark');
+    const actual_id = stream_data.get_stream_id('Denmark');
     assert.equal(actual_id, 42);
 });
 
 run_test('unsubscribe', () => {
     stream_data.clear_subscriptions();
 
-    var sub = {name: 'devel', subscribed: false, stream_id: 1};
-    var me = {
+    let sub = {name: 'devel', subscribed: false, stream_id: 1};
+    const me = {
         email: 'me@zulip.com',
         full_name: 'Current User',
         user_id: 81,
@@ -155,21 +158,21 @@ run_test('unsubscribe', () => {
 
 run_test('subscribers', () => {
     stream_data.clear_subscriptions();
-    var sub = {name: 'Rome', subscribed: true, stream_id: 1};
+    let sub = {name: 'Rome', subscribed: true, stream_id: 1};
 
     stream_data.add_sub('Rome', sub);
 
-    var fred = {
+    const fred = {
         email: 'fred@zulip.com',
         full_name: 'Fred',
         user_id: 101,
     };
-    var not_fred = {
+    const not_fred = {
         email: 'not_fred@zulip.com',
         full_name: 'Not Fred',
         user_id: 102,
     };
-    var george = {
+    const george = {
         email: 'george@zulip.com',
         full_name: 'George',
         user_id: 103,
@@ -186,7 +189,7 @@ run_test('subscribers', () => {
 
     stream_data.set_subscribers(sub, []);
 
-    var brutus = {
+    const brutus = {
         email: 'brutus@zulip.com',
         full_name: 'Brutus',
         user_id: 104,
@@ -195,13 +198,13 @@ run_test('subscribers', () => {
     assert(!stream_data.is_user_subscribed('Rome', brutus.user_id));
 
     // add
-    var ok = stream_data.add_subscriber('Rome', brutus.user_id);
+    let ok = stream_data.add_subscriber('Rome', brutus.user_id);
     assert(ok);
     assert(stream_data.is_user_subscribed('Rome', brutus.user_id));
     sub = stream_data.get_sub('Rome');
     stream_data.update_subscribers_count(sub);
     assert.equal(sub.subscriber_count, 1);
-    var sub_email = "Rome:214125235@zulipdev.com:9991";
+    const sub_email = "Rome:214125235@zulipdev.com:9991";
     stream_data.update_stream_email_address(sub, sub_email);
     assert.equal(sub.email_address, sub_email);
 
@@ -227,7 +230,7 @@ run_test('subscribers', () => {
     assert.equal(blueslip.get_test_logs('warn').length, 1);
 
     // Verify noop for bad stream when removing subscriber
-    var bad_stream = 'UNKNOWN';
+    const bad_stream = 'UNKNOWN';
     blueslip.set_test_data('warn', 'We got a remove_subscriber call for a non-existent stream ' + bad_stream);
     ok = stream_data.remove_subscriber(bad_stream, brutus.user_id);
     assert(!ok);
@@ -288,16 +291,46 @@ run_test('subscribers', () => {
 run_test('is_active', () => {
     stream_data.clear_subscriptions();
 
-    var sub;
+    let sub;
+
+    page_params.demote_inactive_streams =
+        settings_display.demote_inactive_streams_values.automatic.code;
 
     sub = {name: 'pets', subscribed: false, stream_id: 111};
     stream_data.add_sub('pets', sub);
 
     assert(stream_data.is_active(sub));
 
-    stream_data.set_filter_out_inactives(true);
+    stream_data.subscribe_myself(sub);
+    assert(stream_data.is_active(sub));
+
+    stream_data.unsubscribe_myself(sub);
+    assert(stream_data.is_active(sub));
+
+    sub.pin_to_top = true;
+    assert(stream_data.is_active(sub));
+    sub.pin_to_top = false;
+
+    const opts = {
+        stream_id: 222,
+        message_id: 108,
+        topic_name: 'topic2',
+    };
+    topic_data.add_message(opts);
+
+    assert(stream_data.is_active(sub));
+
+    page_params.demote_inactive_streams =
+        settings_display.demote_inactive_streams_values.always.code;
+
+    sub = {name: 'pets', subscribed: false, stream_id: 111};
+    stream_data.add_sub('pets', sub);
 
     assert(!stream_data.is_active(sub));
+
+    sub.pin_to_top = true;
+    assert(stream_data.is_active(sub));
+    sub.pin_to_top = false;
 
     stream_data.subscribe_myself(sub);
     assert(stream_data.is_active(sub));
@@ -308,13 +341,29 @@ run_test('is_active', () => {
     sub = {name: 'lunch', subscribed: false, stream_id: 222};
     stream_data.add_sub('lunch', sub);
 
-    assert(!stream_data.is_active(sub));
+    assert(stream_data.is_active(sub));
 
-    var opts = {
-        stream_id: 222,
-        message_id: 108,
-        topic_name: 'topic2',
-    };
+    topic_data.add_message(opts);
+
+    assert(stream_data.is_active(sub));
+
+    page_params.demote_inactive_streams =
+        settings_display.demote_inactive_streams_values.never.code;
+
+    sub = {name: 'pets', subscribed: false, stream_id: 111};
+    stream_data.add_sub('pets', sub);
+
+    assert(stream_data.is_active(sub));
+
+    stream_data.subscribe_myself(sub);
+    assert(stream_data.is_active(sub));
+
+    stream_data.unsubscribe_myself(sub);
+    assert(stream_data.is_active(sub));
+
+    sub.pin_to_top = true;
+    assert(stream_data.is_active(sub));
+
     topic_data.add_message(opts);
 
     assert(stream_data.is_active(sub));
@@ -322,12 +371,12 @@ run_test('is_active', () => {
 
 run_test('admin_options', () => {
     function make_sub() {
-        var sub = {
+        const sub = {
             subscribed: false,
             color: 'blue',
             name: 'stream_to_admin',
             stream_id: 1,
-            in_home_view: false,
+            is_muted: true,
             invite_only: false,
         };
         stream_data.add_sub(sub.name, sub);
@@ -336,7 +385,7 @@ run_test('admin_options', () => {
 
     // non-admins can't do anything
     global.page_params.is_admin = false;
-    var sub = make_sub();
+    let sub = make_sub();
     stream_data.update_calculated_fields(sub);
     assert(!sub.is_admin);
     assert(!sub.can_change_stream_permissions);
@@ -371,7 +420,7 @@ run_test('admin_options', () => {
 });
 
 run_test('stream_settings', () => {
-    var cinnamon = {
+    const cinnamon = {
         stream_id: 1,
         name: 'c',
         color: 'cinnamon',
@@ -379,7 +428,7 @@ run_test('stream_settings', () => {
         invite_only: false,
     };
 
-    var blue = {
+    const blue = {
         stream_id: 2,
         name: 'b',
         color: 'blue',
@@ -387,19 +436,21 @@ run_test('stream_settings', () => {
         invite_only: false,
     };
 
-    var amber = {
+    const amber = {
         stream_id: 3,
         name: 'a',
         color: 'amber',
         subscribed: true,
         invite_only: true,
+        history_public_to_subscribers: true,
+        is_announcement_only: true,
     };
     stream_data.clear_subscriptions();
     stream_data.add_sub(cinnamon.name, cinnamon);
     stream_data.add_sub(amber.name, amber);
     stream_data.add_sub(blue.name, blue);
 
-    var sub_rows = stream_data.get_streams_for_settings_page();
+    let sub_rows = stream_data.get_streams_for_settings_page();
     assert.equal(sub_rows[0].color, 'blue');
     assert.equal(sub_rows[1].color, 'amber');
     assert.equal(sub_rows[2].color, 'cinnamon');
@@ -412,29 +463,51 @@ run_test('stream_settings', () => {
     assert.equal(sub_rows[1].invite_only, false);
     assert.equal(sub_rows[2].invite_only, false);
 
+    assert.equal(sub_rows[0].history_public_to_subscribers, true);
+    assert.equal(sub_rows[0].is_announcement_only, true);
+
+    const sub = stream_data.get_sub('a');
+    stream_data.update_stream_privacy(sub, {
+        invite_only: false,
+        history_public_to_subscribers: false,
+    });
+    stream_data.update_stream_announcement_only(sub, false);
+    stream_data.update_calculated_fields(sub);
+    assert.equal(sub.invite_only, false);
+    assert.equal(sub.history_public_to_subscribers, false);
+    assert.equal(sub.is_announcement_only, false);
+
+    // For guest user only retrieve subscribed streams
+    sub_rows = stream_data.get_updated_unsorted_subs();
+    assert.equal(sub_rows.length, 3);
+    global.page_params.is_guest = true;
+    sub_rows = stream_data.get_updated_unsorted_subs();
+    assert.equal(sub_rows[0].name, 'c');
+    assert.equal(sub_rows[1].name, 'a');
+    assert.equal(sub_rows.length, 2);
 });
 
 run_test('default_stream_names', () => {
-    var announce = {
+    const announce = {
         stream_id: 101,
         name: 'announce',
         subscribed: true,
     };
 
-    var public_stream = {
+    const public_stream = {
         stream_id: 102,
         name: 'public',
         subscribed: true,
     };
 
-    var private_stream = {
+    const private_stream = {
         stream_id: 103,
         name: 'private',
         subscribed: true,
         invite_only: true,
     };
 
-    var general = {
+    const general = {
         stream_id: 104,
         name: 'general',
         subscribed: true,
@@ -448,7 +521,7 @@ run_test('default_stream_names', () => {
     stream_data.add_sub('private_stream', private_stream);
     stream_data.add_sub('general', general);
 
-    var names = stream_data.get_non_default_stream_names();
+    let names = stream_data.get_non_default_stream_names();
     assert.deepEqual(names, ['public', 'private']);
 
     names = stream_data.get_default_stream_names();
@@ -456,7 +529,7 @@ run_test('default_stream_names', () => {
 });
 
 run_test('delete_sub', () => {
-    var canada = {
+    const canada = {
         stream_id: 101,
         name: 'Canada',
         subscribed: true,
@@ -484,7 +557,7 @@ run_test('delete_sub', () => {
 });
 
 run_test('get_subscriber_count', () => {
-    var india = {
+    const india = {
         stream_id: 102,
         name: 'India',
         subscribed: true,
@@ -499,7 +572,7 @@ run_test('get_subscriber_count', () => {
     stream_data.add_sub('India', india);
     assert.equal(stream_data.get_subscriber_count('India'), 0);
 
-    var fred = {
+    const fred = {
         email: 'fred@zulip.com',
         full_name: 'Fred',
         user_id: 101,
@@ -507,7 +580,7 @@ run_test('get_subscriber_count', () => {
     people.add(fred);
     stream_data.add_subscriber('India', 102);
     assert.equal(stream_data.get_subscriber_count('India'), 1);
-    var george = {
+    const george = {
         email: 'george@zulip.com',
         full_name: 'George',
         user_id: 103,
@@ -516,64 +589,84 @@ run_test('get_subscriber_count', () => {
     stream_data.add_subscriber('India', 103);
     assert.equal(stream_data.get_subscriber_count('India'), 2);
 
-    var sub = stream_data.get_sub_by_name('India');
+    const sub = stream_data.get_sub_by_name('India');
     delete sub.subscribers;
     assert.deepStrictEqual(stream_data.get_subscriber_count('India'), 0);
 });
 
 run_test('notifications', () => {
-    var india = {
+    const india = {
         stream_id: 102,
         name: 'India',
         subscribed: true,
-        desktop_notifications: true,
-        audible_notifications: true,
+        desktop_notifications: null,
+        audible_notifications: null,
     };
     stream_data.clear_subscriptions();
     stream_data.add_sub('India', india);
-    assert(stream_data.receives_desktop_notifications('India'));
-    assert(!stream_data.receives_desktop_notifications('Indiana'));
 
-    assert(stream_data.receives_audible_notifications('India'));
-    assert(!stream_data.receives_audible_notifications('Indiana'));
+    assert(!stream_data.receives_notifications('Indiana', "desktop_notifications"));
+    assert(!stream_data.receives_notifications('Indiana', "audible_notifications"));
+
+    page_params.enable_stream_desktop_notifications = true;
+    page_params.enable_stream_audible_notifications = true;
+    assert(stream_data.receives_notifications('India', "desktop_notifications"));
+    assert(stream_data.receives_notifications('India', "audible_notifications"));
+
+    page_params.enable_stream_desktop_notifications = false;
+    page_params.enable_stream_audible_notifications = false;
+    assert(!stream_data.receives_notifications('India', "desktop_notifications"));
+    assert(!stream_data.receives_notifications('India', "audible_notifications"));
+
+    india.desktop_notifications = true;
+    india.audible_notifications = true;
+    assert(stream_data.receives_notifications('India', "desktop_notifications"));
+    assert(stream_data.receives_notifications('India', "audible_notifications"));
+
+    india.desktop_notifications = false;
+    india.audible_notifications = false;
+    page_params.enable_stream_desktop_notifications = true;
+    page_params.enable_stream_audible_notifications = true;
+    assert(!stream_data.receives_notifications('India', "desktop_notifications"));
+    assert(!stream_data.receives_notifications('India', "audible_notifications"));
 });
 
-run_test('in_home_view', () => {
-    var tony = {
+run_test('is_muted', () => {
+    const tony = {
         stream_id: 999,
         name: 'tony',
         subscribed: true,
-        in_home_view: true,
+        is_muted: false,
     };
 
-    var jazy = {
+    const jazy = {
         stream_id: 500,
         name: 'jazy',
         subscribed: false,
-        in_home_view: false,
+        is_muted: true,
     };
 
     stream_data.add_sub('tony', tony);
     stream_data.add_sub('jazy', jazy);
-    assert(stream_data.name_in_home_view('tony'));
-    assert(!stream_data.name_in_home_view('jazy'));
-    assert(!stream_data.name_in_home_view('EEXISTS'));
+    assert(!stream_data.is_stream_muted_by_name('tony'));
+    assert(stream_data.is_stream_muted_by_name('jazy'));
+    assert(stream_data.is_stream_muted_by_name('EEXISTS'));
 });
 
-run_test('notifications_in_home_view', () => {
+run_test('is_notifications_stream_muted', () => {
     page_params.notifications_stream = 'tony';
-    assert(stream_data.notifications_in_home_view());
+    assert(!stream_data.is_notifications_stream_muted());
 
     page_params.notifications_stream = 'jazy';
-    assert(!stream_data.notifications_in_home_view());
+    assert(stream_data.is_notifications_stream_muted());
 });
 
 run_test('remove_default_stream', () => {
-    var remove_me = {
+    const remove_me = {
         stream_id: 674,
         name: 'remove_me',
         subscribed: false,
-        in_home_view: false,
+        is_muted: true,
     };
 
     stream_data.add_sub('remove_me', remove_me);
@@ -592,18 +685,18 @@ run_test('canonicalized_name', () => {
 
 run_test('create_sub', () => {
     stream_data.clear_subscriptions();
-    var india = {
+    const india = {
         stream_id: 102,
         name: 'India',
         subscribed: true,
     };
 
-    var canada = {
+    const canada = {
         name: 'Canada',
         subscribed: true,
     };
 
-    var antarctica = {
+    const antarctica = {
         stream_id: 103,
         name: 'Antarctica',
         subscribed: true,
@@ -614,19 +707,19 @@ run_test('create_sub', () => {
         return '#bd86e5';
     };
 
-    var india_sub = stream_data.create_sub_from_server_data('India', india);
+    const india_sub = stream_data.create_sub_from_server_data('India', india);
     assert(india_sub);
     assert.equal(india_sub.color, '#bd86e5');
-    var new_sub = stream_data.create_sub_from_server_data('India', india); // make sure sub doesn't get created twice
+    const new_sub = stream_data.create_sub_from_server_data('India', india); // make sure sub doesn't get created twice
     assert.equal(india_sub, new_sub);
 
     blueslip.set_test_data('fatal', 'We cannot create a sub without a stream_id');
-    var ok = stream_data.create_sub_from_server_data('Canada', canada);
+    const ok = stream_data.create_sub_from_server_data('Canada', canada);
     assert.equal(ok, undefined);
     assert.equal(blueslip.get_test_logs('fatal').length, 1);
     blueslip.clear_test_data();
 
-    var antarctica_sub = stream_data.create_sub_from_server_data('Antarctica', antarctica);
+    const antarctica_sub = stream_data.create_sub_from_server_data('Antarctica', antarctica);
     assert(antarctica_sub);
     assert.equal(antarctica_sub.color, '#76ce90');
 });
@@ -650,6 +743,7 @@ run_test('initialize', () => {
     }
 
     initialize();
+    page_params.demote_inactive_streams = 1;
     page_params.realm_notifications_stream_id = -1;
     stream_data.initialize();
     assert(!stream_data.is_filtering_inactives());
@@ -671,7 +765,7 @@ run_test('initialize', () => {
 
     // Now actually subscribe the user to the stream
     initialize();
-    var foo = {
+    const foo = {
         name: 'foo',
         stream_id: 89,
     };
@@ -694,10 +788,10 @@ run_test('filter inactives', () => {
     page_params.subscriptions = [];
 
     _.times(30, function (i) {
-        var name = 'random' + i.toString();
-        var stream_id = 100 + i;
+        const name = 'random' + i.toString();
+        const stream_id = 100 + i;
 
-        var sub = {
+        const sub = {
             name: name,
             subscribed: true,
             newly_subscribed: false,
@@ -711,7 +805,7 @@ run_test('filter inactives', () => {
 
 run_test('invite_streams', () => {
     // add default stream
-    var orie = {
+    const orie = {
         stream_id: 320,
         name: 'Orie',
         subscribed: true,
@@ -724,10 +818,10 @@ run_test('invite_streams', () => {
     stream_data.add_sub('Orie', orie);
     stream_data.set_realm_default_streams([orie]);
 
-    var expected_list = ['Orie'];
+    const expected_list = ['Orie'];
     assert.deepEqual(stream_data.invite_streams(), expected_list);
 
-    var inviter = {
+    const inviter = {
         stream_id: 25,
         name: 'Inviter',
         subscribed: true,
@@ -739,7 +833,7 @@ run_test('invite_streams', () => {
 });
 
 run_test('edge_cases', () => {
-    var bad_stream_ids = [555555, 99999];
+    const bad_stream_ids = [555555, 99999];
 
     // just make sure we don't explode
     stream_data.sort_for_stream_settings(bad_stream_ids);
@@ -747,7 +841,7 @@ run_test('edge_cases', () => {
 
 run_test('get_invite_stream_data', () => {
     // add default stream
-    var orie = {
+    const orie = {
         name: 'Orie',
         stream_id: 320,
         invite_only: false,
@@ -761,7 +855,7 @@ run_test('get_invite_stream_data', () => {
     stream_data.add_sub('Orie', orie);
     stream_data.set_realm_default_streams([orie]);
 
-    var expected_list = [{
+    const expected_list = [{
         name: 'Orie',
         stream_id: 320,
         invite_only: false,
@@ -769,7 +863,7 @@ run_test('get_invite_stream_data', () => {
     }];
     assert.deepEqual(stream_data.get_invite_stream_data(), expected_list);
 
-    var inviter = {
+    const inviter = {
         name: 'Inviter',
         stream_id: 25,
         invite_only: true,
@@ -788,17 +882,17 @@ run_test('get_invite_stream_data', () => {
 
 run_test('all_topics_in_cache', () => {
     // Add a new stream with first_message_id set.
-    var general = {
+    const general = {
         name: 'general',
         stream_id: 21,
         first_message_id: null,
     };
-    var messages = [
+    const messages = [
         {id: 1, stream_id: 21},
         {id: 2, stream_id: 21},
         {id: 3, stream_id: 21},
     ];
-    var sub = stream_data.create_sub_from_server_data('general', general);
+    const sub = stream_data.create_sub_from_server_data('general', general);
 
     assert.equal(stream_data.all_topics_in_cache(sub), false);
 

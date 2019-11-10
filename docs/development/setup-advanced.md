@@ -5,15 +5,14 @@ Contents:
 * [Installing directly on Ubuntu, Debian, Centos, or Fedora](#installing-directly-on-ubuntu-debian-centos-or-fedora)
 * [Installing manually on other Linux/UNIX](#installing-manually-on-unix)
 * [Installing directly on cloud9](#installing-on-cloud9)
-* [Using Docker (experimental)](#using-docker-experimental)
 
 ## Installing directly on Ubuntu, Debian, Centos, or Fedora
 
 If you'd like to install a Zulip development environment on a computer
 that's running one of:
 
-* Ubuntu 18.10 Cosmic, 18.04 Bionic, 16.04 Xenial, 14.04 Trusty
-* Debian 9 Stretch
+* Ubuntu 19.04 Disco, 18.10 Cosmic, 18.04 Bionic, 16.04 Xenial
+* Debian 9 Stretch or 10 Buster
 * Centos 7 (beta)
 * Fedora 29 (beta)
 * RHEL 7 (beta)
@@ -21,13 +20,16 @@ that's running one of:
 You can just run the Zulip provision script on your machine.
 
 **Note**: you should not use the `root` user to run the installation.
-If you are using a [remote server](../development/remote.html), see
+If you are using a [remote server](../development/remote.md), see
 the
 [section on creating appropriate user accounts](../development/remote.html#setting-up-user-accounts).
 
-**Warning**: there is no supported uninstallation process with this
-method.  If you want that, use the Vagrant environment, where you can
-just do `vagrant destroy` to clean up the development environment.
+```eval_rst
+.. warning::
+    there is no supported uninstallation process with this
+    method.  If you want that, use the Vagrant environment, where you can
+    just do `vagrant destroy` to clean up the development environment.
+```
 
 Start by [cloning your fork of the Zulip repository][zulip-rtd-git-cloning]
 and [connecting the Zulip upstream repository][zulip-rtd-git-connect]:
@@ -102,12 +104,6 @@ git remote add -f upstream https://github.com/zulip/zulip.git
 doas pkg_add sudo bash gcc postgresql-server redis rabbitmq \
     memcached libmemcached py-Pillow py-cryptography py-cffi
 
-# Get tsearch_extras and build it (using a modified version which
-# aliases int4 on OpenBSD):
-git clone https://github.com/blablacio/tsearch_extras
-cd tsearch_extras
-gmake && sudo gmake install
-
 # Point environment to custom include locations and use newer GCC
 # (needed for Node modules):
 export CFLAGS="-I/usr/local/include -I/usr/local/include/sasl"
@@ -149,7 +145,7 @@ If you want to do it manually, here are the steps:
 
 ```
 sudo virtualenv /srv/zulip-py3-venv -p python3 # Create a python3 virtualenv
-sudo chown -R `whoami`:`whoami` /srv/zulip-py3-venv
+sudo chown -R `whoami`: /srv/zulip-py3-venv
 source /srv/zulip-py3-venv/bin/activate # Activate python3 virtualenv
 pip install --upgrade pip # upgrade pip itself because older versions have known issues
 pip install --no-deps -r requirements/dev.txt # install python packages required for development
@@ -161,10 +157,9 @@ Now run these commands:
 sudo ./scripts/lib/install-node
 yarn install
 sudo mkdir /srv/zulip-emoji-cache
-sudo chown -R `whoami`:`whoami` /srv/zulip-emoji-cache
+sudo chown -R `whoami`: /srv/zulip-emoji-cache
 ./tools/setup/emoji/build_emoji
 ./tools/inline-email-css
-./tools/setup/generate-custom-icon-webfont
 ./tools/setup/build_pygments_data
 ./tools/setup/generate_zulip_bots_static_files.py
 ./scripts/setup/generate_secrets.py --development
@@ -258,110 +253,6 @@ automatically forward the connection. You might want to visit
 [zulip-cloud9 repo](https://github.com/cPhost/zulip-cloud9) and it's
 [wiki](https://github.com/cPhost/zulip-cloud9/wiki) for more info on
 how to use zulip-cloud9 package.
-
-## Using Docker (experimental)
-
-Start by [cloning your fork of the Zulip repository][zulip-rtd-git-cloning]
-and [connecting the Zulip upstream repository][zulip-rtd-git-connect]:
-
-```
-git clone --config pull.rebase https://github.com/YOURUSERNAME/zulip.git
-git remote add -f upstream https://github.com/zulip/zulip.git
-```
-
-The docker instructions for development are experimental, so they may
-have bugs.  If you try them and run into any issues, please report
-them!
-
-You can also use Docker to run a Zulip development environment.
-First, you need to install Docker in your development machine
-following the [instructions][docker-install].  Some other interesting
-links for somebody new in Docker are:
-
-* [Get Started](https://docs.docker.com/get-started/)
-* [Understand the architecture](https://docs.docker.com/engine/docker-overview/)
-* [Docker run reference](https://docs.docker.com/engine/reference/run/)
-* [Dockerfile reference](https://docs.docker.com/engine/reference/builder/)
-
-[docker-install]: https://docs.docker.com/engine/installation/
-
-Then you should create the Docker image based on Ubuntu Linux, first
-go to the directory with the Zulip source code:
-
-```
-docker build -t user/zulipdev -f Dockerfile-dev .
-```
-
-
-Commit and tag the provisioned images. The below will install Zulip's dependencies:
-```
-docker run -itv $(pwd):/srv/zulip -p 9991:9991 user/zulipdev /bin/bash
-$ /bin/bash sudo chown -R zulip:zulip /srv/zulip
-$ /bin/bash /srv/zulip/tools/provision --docker
-docker ps -af ancestor=user/zulipdev
-docker commit -m "Zulip installed" <container id> user/zulipdev:v2
-```
-
-Now you can run the docker server with:
-
-```
-docker run -itv $(pwd):/srv/zulip -p 9991:9991 user/zulipdev:v2 \
-    /srv/zulip/tools/start-dockers
-```
-
-You'll want to
-[read the guide for Zulip development](../development/setup-vagrant.html#step-4-developing)
-to understand how to use the Zulip development.  Note that
-`start-dockers` automatically runs `tools/run-dev.py` inside the
-container; you can then visit http://localhost:9991 to connect to your
-new Zulip Docker container.
-
-
-To view the container's `run-dev.py` console logs to get important
-debugging information (and e.g. outgoing emails) printed by the Zulip
-development environment, you can use:
-```
-docker logs --follow <container id>
-```
-
-To restart the server use:
-```
-docker ps
-docker restart <container id>
-```
-
-To stop the server use:
-```
-docker ps
-docker kill <container id>
-```
-
-If you want to connect to the Docker instance to run commands
-(e.g. build a release tarball), you can use:
-
-```
-docker ps
-docker exec -it <container id> /bin/bash
-$ source /home/zulip/.bash_profile
-$ <Your commands>
-$ exit
-```
-
-If you want to run all the tests you need to start the servers first,
-you can do it with:
-
-```
-docker run -itv $(pwd):/srv/zulip user/zulipdev:v2 /bin/bash
-$ tools/test-all-docker
-```
-
-You can modify the source code in your development machine and review
-the results in your browser.
-
-
-Currently, the Docker workflow is substantially less convenient than
-the Vagrant workflow and less documented; please contribute to this
-guide and the Docker tooling if you are using Docker to develop Zulip!
 
 [zulip-rtd-git-cloning]: ../git/cloning.html#step-1b-clone-to-your-machine
 [zulip-rtd-git-connect]: ../git/cloning.html#step-1c-connect-your-fork-to-zulip-upstream

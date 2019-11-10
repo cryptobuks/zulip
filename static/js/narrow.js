@@ -1,7 +1,3 @@
-var narrow = (function () {
-
-var exports = {};
-
 var unnarrow_times;
 
 function report_narrow_time(initial_core_time, initial_free_time, network_time) {
@@ -88,11 +84,26 @@ exports.activate = function (raw_operators, opts) {
             exports.narrow_title = filter.operands("stream")[0];
         }
     } else if (filter.has_operator("is")) {
-        exports.narrow_title = filter.operands("is")[0];
-    } else if (filter.has_operator("pm-with")) {
-        exports.narrow_title = "private";
-    } else if (filter.has_operator("group-pm-with")) {
-        exports.narrow_title = "private group";
+        var title = filter.operands("is")[0];
+        title = title.charAt(0).toUpperCase() + title.slice(1) + " messages";
+        exports.narrow_title = title;
+    } else if (filter.has_operator("pm-with") || filter.has_operator("group-pm-with")) {
+        var emails = filter.public_operators()[0].operand;
+        var user_ids = people.emails_strings_to_user_ids_string(emails);
+        if (user_ids !== undefined) {
+            var names = people.get_recipients(user_ids);
+            if (filter.has_operator("pm-with")) {
+                exports.narrow_title = names;
+            } else {
+                exports.narrow_title = names + " and others";
+            }
+        } else {
+            if (emails.indexOf(',') > -1) {
+                exports.narrow_title = "Invalid users";
+            } else {
+                exports.narrow_title = "Invalid user";
+            }
+        }
     }
 
     notifications.redraw_title();
@@ -137,7 +148,7 @@ exports.activate = function (raw_operators, opts) {
     }
 
     if (!was_narrowed_already) {
-        unread.messages_read_in_narrow = false;
+        unread.set_messages_read_in_narrow(false);
     }
 
     // IMPORTANT!  At this point we are heavily committed to
@@ -194,7 +205,7 @@ exports.activate = function (raw_operators, opts) {
     $("#zhome").removeClass("focused_table");
 
     ui_util.change_tab_to('#home');
-    message_list.narrowed = msg_list;
+    message_list.set_narrowed(msg_list);
     current_msg_list = message_list.narrowed;
 
     var then_select_offset;
@@ -211,9 +222,12 @@ exports.activate = function (raw_operators, opts) {
         if (id_info.final_select_id !== undefined) {
             anchor = id_info.final_select_id;
             use_first_unread = false;
-        } else {
+        } else if (narrow_state.filter().allow_use_first_unread_when_narrowing()) {
             anchor = -1;
             use_first_unread = true;
+        } else {
+            anchor = 10000000000000000;
+            use_first_unread = false;
         }
 
         message_fetch.load_messages_for_narrow({
@@ -257,11 +271,22 @@ exports.activate = function (raw_operators, opts) {
         });
     }
 
-    if (filter.has_operator("is") && filter.operands("is")[0] === "private"
-        || filter.has_operator("pm-with") || filter.has_operator("group-pm-with")) {
+    if (filter.contains_only_private_messages()) {
         compose.update_closed_compose_buttons_for_private();
     } else {
         compose.update_closed_compose_buttons_for_stream();
+    }
+
+    // Toggle the notice that lets users know that not all messages were searched.
+    // One could imagine including `filter.is_search()` in these conditions, but
+    // there's a very legitimate use case for moderation of searching for all
+    // messages sent by a potential spammer user.
+    if (!filter.contains_only_private_messages() &&
+        !filter.includes_full_stream_history() &&
+        !filter.has_operand("is", "starred")) {
+        $(".all-messages-search-caution").show();
+    } else {
+        $(".all-messages-search-caution").hide();
     }
 
     // Put the narrow operators in the search bar.
@@ -577,7 +602,12 @@ exports.by_topic = function (target_id, opts) {
         exports.by_recipient(target_id, opts);
         return;
     }
+
+    // We don't check msg_list.can_mark_messages_read here only because
+    // the target msg_list isn't initialized yet; in any case, the
+    // message is about to be marked read in the new view.
     unread_ops.notify_server_message_read(original);
+
     var search_terms = [
         {operator: 'stream', operand: original.stream},
         {operator: 'topic', operand: util.get_message_topic(original)},
@@ -591,7 +621,12 @@ exports.by_recipient = function (target_id, opts) {
     opts = _.defaults({}, opts, {then_select_id: target_id});
     // don't use current_msg_list as it won't work for muted messages or for out-of-narrow links
     var message = message_store.get(target_id);
+
+    // We don't check msg_list.can_mark_messages_read here only because
+    // the target msg_list isn't initialized yet; in any case, the
+    // message is about to be marked read in the new view.
     unread_ops.notify_server_message_read(message);
+
     switch (message.type) {
     case 'private':
         exports.by('pm-with', message.reply_to, opts);
@@ -663,6 +698,7 @@ function handle_post_narrow_deactivate_processes() {
     exports.narrow_title = "home";
     notifications.redraw_title();
     notifications.hide_or_show_history_limit_message(home_msg_list);
+    $(".all-messages-search-caution").hide();
 }
 
 exports.deactivate = function () {
@@ -753,9 +789,15 @@ exports.restore_home_state = function () {
     navigate.maybe_scroll_to_selected();
 };
 
+function set_invalid_narrow_message(invalid_narrow_message) {
+    var search_string_display = $("#empty_search_stop_words_string");
+    search_string_display.text(invalid_narrow_message);
+}
+
 function show_search_query() {
-    // Don't need to handle "search:" filter because search_query does not contain it.
-    var search_query = narrow_state.search_string();
+    // when search bar contains multiple filters, only show search queries
+    var current_filter = narrow_state.filter();
+    var search_query = current_filter.operands("search")[0];
     var query_words = search_query.split(" ");
 
     var search_string_display = $("#empty_search_stop_words_string");
@@ -763,6 +805,22 @@ function show_search_query() {
 
     // Also removes previous search_string if any
     search_string_display.text(i18n.t("You searched for:"));
+
+    // Add in stream:foo and topic:bar if present
+    if (current_filter.has_operator("stream") || current_filter.has_operator("topic")) {
+        var stream_topic_string = "";
+        var stream = current_filter.operands('stream')[0];
+        var topic = current_filter.operands('topic')[0];
+        if (stream) {
+            stream_topic_string = "stream: " + stream;
+        }
+        if (topic) {
+            stream_topic_string = stream_topic_string + " topic: " + topic;
+        }
+
+        search_string_display.append(' ');
+        search_string_display.append($('<span>').text(stream_topic_string));
+    }
 
     _.each(query_words, function (query_word) {
         search_string_display.append(' ');
@@ -799,7 +857,33 @@ function pick_empty_narrow_banner() {
     var num_operators = current_filter.operators().length;
 
     if (num_operators !== 1) {
-        // For multi-operator narrows, we just use the default banner
+        // For invalid-multi-operator narrows, we display an invalid narrow message
+        var streams = current_filter.operands("stream");
+
+        var invalid_narrow_message = "";
+        // No message can have multiple streams
+        if (streams.length > 1) {
+            invalid_narrow_message = i18n.t("You are searching for messages that belong to more than one stream, which is not possible.");
+        }
+        // No message can have multiple topics
+        if (current_filter.operands("topic").length > 1) {
+            invalid_narrow_message = i18n.t("You are searching for messages that belong to more than one topic, which is not possible.");
+        }
+        // No message can have multiple senders
+        if (current_filter.operands("sender").length > 1) {
+            invalid_narrow_message = i18n.t("You are searching for messages that are sent by more than one person, which is not possible.");
+        }
+        if (invalid_narrow_message !== "") {
+            set_invalid_narrow_message(invalid_narrow_message);
+            return $("#empty_search_narrow_message");
+        }
+
+        // For empty stream searches within other narrows, we display the stop words
+        if (current_filter.operands("search").length > 0) {
+            show_search_query();
+            return $("#empty_search_narrow_message");
+        }
+        // For other multi-operator narrows, we just use the default banner
         return default_banner;
     } else if (first_operator === "is") {
         if (first_operand === "starred") {
@@ -865,10 +949,4 @@ exports.hide_empty_narrow_message = function () {
     $("#left_bar_compose_reply_button_big").removeAttr("disabled");
 };
 
-return exports;
-
-}());
-if (typeof module !== 'undefined') {
-    module.exports = narrow;
-}
-window.narrow = narrow;
+window.narrow = exports;

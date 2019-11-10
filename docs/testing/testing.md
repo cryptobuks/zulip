@@ -5,18 +5,18 @@
 Zulip has a full test suite that includes many components.  The most
 important components are documented in depth in their own sections:
 
-- [Django](../testing/testing-with-django.html): backend Python tests
-- [Casper](../testing/testing-with-casper.html): end-to-end UI tests
-- [Node](../testing/testing-with-node.html): unit tests for JS front end code
-- [Linters](../testing/linters.html): Our parallel linter suite
-- [CI details](continuous-integration.html): How all of these run in CI
+- [Django](../testing/testing-with-django.md): backend Python tests
+- [Casper](../testing/testing-with-casper.md): end-to-end UI tests
+- [Node](../testing/testing-with-node.md): unit tests for JS front end code
+- [Linters](../testing/linters.md): Our parallel linter suite
+- [CI details](continuous-integration.md): How all of these run in CI
 - [Other test suites](#other-test-suites): Our various smaller test suites.
 
 This document covers more general testing issues, such as how to run the
 entire test suite, how to troubleshoot database issues, how to manually
 test the front end, etc.
 
-We also document [how to manually test the app](manual-testing.html).
+We also document [how to manually test the app](manual-testing.md).
 
 ## Running tests
 
@@ -60,7 +60,7 @@ Zulip also has about a dozen smaller tests suites:
 
 - `tools/test-migrations`: Checks whether the `zerver/migrations`
   migration content the models defined in `zerver/models.py`.  See our
-  [schema migration documentation](../subsystems/schema-migrations.html)
+  [schema migration documentation](../subsystems/schema-migrations.md)
   for details on how to do database migrations correctly.
 - `tools/test-documentation`: Checks for broken links in this
   ReadTheDocs documentation site.
@@ -68,17 +68,18 @@ Zulip also has about a dozen smaller tests suites:
   `/help` user documentation site, and related pages.
 - `tools/test-api`: Tests that the API documentation at `/api`
   actually works; the actual code for this is defined in
-  `zerver/lib/api_test_helpers.py`.
+  `zerver/openapi/python_examples.py`.
 - `test-locked-requirements`: Verifies that developers didn't forget
   to run `tools/update-locked-requirements` after modifying
   `requirements/*.in`.  See
-  [our dependency documentation](../subsystems/dependencies.html) for
+  [our dependency documentation](../subsystems/dependencies.md) for
   details on the system this is verifying.
 - `tools/check-capitalization`: Checks whether translated strings (aka
   user-facing strings) correctly follow Zulip's capitalization
-  conventions.  This requires some maintainance of an exclude list of
-  proper nouns mentioned in the Zulip project, but helps a lot in
-  avoiding new strings being added that don't match our style.
+  conventions.  This requires some maintainance of an exclude list
+  (`tools.lib.capitalization.IGNORED_PHRASES`) of proper nouns
+  mentioned in the Zulip project, but helps a lot in avoiding new
+  strings being added that don't match our style.
 - `tools/check-frontend-i18n`: Checks for a common bug in Handlebars
   templates, of using the wrong syntax for translating blocks
   containing variables.
@@ -101,22 +102,10 @@ something valuable to helping keep Zulip bug-free.
 
 ### Possible testing issues
 
-- When running the test suite, if you get an error like this:
+- When running the test suite, if you get an error involving Git that looks like this:
 
   ```
-      sqlalchemy.exc.ProgrammingError: (ProgrammingError) function ts_match_locs_array(unknown, text, tsquery) does not   exist
-      LINE 2: ...ECT message_id, flags, subject, rendered_content, ts_match_l...
-                                                                   ^
-  ```
-
-  … then you need to install tsearch-extras, described
-  above. Afterwards, re-run the `init*-db` and the
-  `do-destroy-rebuild*-database` scripts.
-
-- Or, when running the test suite, if you get an error involving Git that looks like this:
-
-  ```
-      commit_messages| An error occurred while executing '/usr/bin/git rev-list --max-count=-1 upstream/master..HEAD': b"fatal: ambiguous argument 'upstream/master..HEAD': unknown revision or path not in the working tree.\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'"
+      gitlint| An error occurred while executing '/usr/bin/git rev-list --max-count=-1 upstream/master..HEAD': b"fatal: ambiguous argument 'upstream/master..HEAD': unknown revision or path not in the working tree.\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'"
   ```
 
   ... then you may need to connect the Zulip upstream repository with the following command:
@@ -124,18 +113,6 @@ something valuable to helping keep Zulip bug-free.
   ```
     git remote add -f upstream https://github.com/zulip/zulip.git
   ```
-
-- When building the development environment using Vagrant and the LXC
-  provider, if you encounter permissions errors, you may need to
-  `chown -R 1000:$(id -g) /path/to/zulip` on the host before running
-  `vagrant up` in order to ensure that the synced directory has the
-  correct owner during provision. This issue will arise if you run `id
-  username` on the host where `username` is the user running Vagrant
-  and the output is anything but 1000.
-  This seems to be caused by Vagrant behavior; for more information,
-  see [the vagrant-lxc FAQ entry about shared folder permissions][lxc-sf].
-
-[lxc-sf]: https://github.com/fgrehm/vagrant-lxc/wiki/FAQ#help-my-shared-folders-have-the-wrong-owner
 
 - When running casper tests (`./tools/test-js-with-casper`), if you
 get an error like this:
@@ -230,10 +207,11 @@ and then run `tools/do-destroy-rebuild-test-database`
 
 ### Recreating the postgres cluster
 
-> **warning**
->
-> **This is irreversible, so do it with care, and never do this anywhere
-> in production.**
+```eval_rst
+.. warning::
+    This is irreversible! Do it with care and never do this anywhere
+    in production.
+```
 
 If your postgres cluster (collection of databases) gets totally trashed
 permissions-wise, and you can't otherwise repair it, you can recreate
@@ -246,7 +224,7 @@ it. On Ubuntu:
 
 This section is about troubleshooting your local development environment.
 
-There is a [separate manual testing doc](manual-testing.html) that
+There is a [separate manual testing doc](manual-testing.md) that
 enumerates things you can test as part of manual QA.
 
 ### Clearing the development database

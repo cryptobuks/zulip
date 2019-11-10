@@ -1,4 +1,3 @@
-
 from django import forms
 from django.conf import settings
 from django.contrib.auth import authenticate
@@ -42,7 +41,9 @@ MIT_VALIDATION_ERROR = u'That user does not exist at MIT or is a ' + \
                        u'<a href="mailto:support@zulipchat.com">contact us</a>.'
 WRONG_SUBDOMAIN_ERROR = "Your Zulip account is not a member of the " + \
                         "organization associated with this subdomain.  " + \
-                        "Please contact %s with any questions!" % (FromAddress.SUPPORT,)
+                        "Please contact your organization administrator with any questions."
+DEACTIVATED_ACCOUNT_ERROR = u"Your account is no longer active. " + \
+                            u"Please contact your organization administrator to reactivate it."
 
 def email_is_not_mit_mailing_list(email: str) -> None:
     """Prevent MIT mailing lists from signing up for Zulip"""
@@ -50,7 +51,7 @@ def email_is_not_mit_mailing_list(email: str) -> None:
         username = email.rsplit("@", 1)[0]
         # Check whether the user exists and can get mail.
         try:
-            DNS.dnslookup("%s.pobox.ns.athena.mit.edu" % username, DNS.Type.TXT)
+            DNS.dnslookup("%s.pobox.ns.athena.mit.edu" % (username,), DNS.Type.TXT)
         except DNS.Base.ServerError as e:
             if e.rcode == DNS.Status.NXDOMAIN:
                 raise ValidationError(mark_safe(MIT_VALIDATION_ERROR))
@@ -77,7 +78,7 @@ def check_subdomain_available(subdomain: str, from_management_command: bool=Fals
     if len(subdomain) < 3:
         raise ValidationError(error_strings['too short'])
     if is_reserved_subdomain(subdomain) or \
-       get_realm(subdomain) is not None:
+       Realm.objects.filter(string_id=subdomain).exists():
         raise ValidationError(error_strings['unavailable'])
 
 class RegistrationForm(forms.Form):
@@ -277,7 +278,13 @@ class OurAuthenticationForm(AuthenticationForm):
 
         if username is not None and password:
             subdomain = get_subdomain(self.request)
-            realm = get_realm(subdomain)
+            try:
+                realm = get_realm(subdomain)
+            except Realm.DoesNotExist:
+                logging.warning("User %s attempted to password login to nonexistent subdomain %s" %
+                                (username, subdomain))
+                raise ValidationError("Realm does not exist")
+
             return_data = {}  # type: Dict[str, Any]
             self.user_cache = authenticate(self.request, username=username, password=password,
                                            realm=realm, return_data=return_data)
@@ -289,10 +296,7 @@ class OurAuthenticationForm(AuthenticationForm):
                 # We exclude mirror dummy accounts here. They should be treated as the
                 # user never having had an account, so we let them fall through to the
                 # normal invalid_login case below.
-                error_msg = (
-                    u"Your account is no longer active. "
-                    u"Please contact your organization administrator to reactivate it.")
-                raise ValidationError(mark_safe(error_msg))
+                raise ValidationError(mark_safe(DEACTIVATED_ACCOUNT_ERROR))
 
             if return_data.get("invalid_subdomain"):
                 logging.warning("User %s attempted to password login to wrong subdomain %s" %
@@ -357,6 +361,8 @@ class RealmRedirectForm(forms.Form):
 
     def clean_subdomain(self) -> str:
         subdomain = self.cleaned_data['subdomain']
-        if get_realm(subdomain) is None:
+        try:
+            get_realm(subdomain)
+        except Realm.DoesNotExist:
             raise ValidationError(_("We couldn't find that Zulip organization."))
         return subdomain

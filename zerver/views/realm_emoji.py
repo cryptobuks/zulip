@@ -7,7 +7,7 @@ from zerver.lib.emoji import check_emoji_admin, check_valid_emoji_name
 from zerver.lib.request import JsonableError, REQ, has_request_variables
 from zerver.lib.response import json_success, json_error
 from zerver.lib.actions import check_add_realm_emoji, do_remove_realm_emoji
-from zerver.decorator import require_non_guest_human_user
+from zerver.decorator import require_member_or_admin
 
 
 def list_emoji(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:
@@ -17,10 +17,10 @@ def list_emoji(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:
     return json_success({'emoji': user_profile.realm.get_emoji()})
 
 
-@require_non_guest_human_user
+@require_member_or_admin
 @has_request_variables
 def upload_emoji(request: HttpRequest, user_profile: UserProfile,
-                 emoji_name: str=REQ()) -> HttpResponse:
+                 emoji_name: str=REQ(path_only=True)) -> HttpResponse:
     emoji_name = emoji_name.strip().replace(' ', '_')
     check_valid_emoji_name(emoji_name)
     check_emoji_admin(user_profile)
@@ -49,7 +49,7 @@ def delete_emoji(request: HttpRequest, user_profile: UserProfile,
     if not RealmEmoji.objects.filter(realm=user_profile.realm,
                                      name=emoji_name,
                                      deactivated=False).exists():
-        raise JsonableError(_("Emoji '%s' does not exist" % (emoji_name,)))
+        raise JsonableError(_("Emoji '%s' does not exist") % (emoji_name,))
     check_emoji_admin(user_profile, emoji_name)
     do_remove_realm_emoji(user_profile.realm, emoji_name)
     return json_success()

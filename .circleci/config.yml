@@ -3,7 +3,7 @@
 # See CircleCI upstream's docs on this config format:
 #   https://circleci.com/docs/2.0/language-python/
 #
-version: 2.1
+version: 2.0
 aliases:
   - &create_cache_directories
     run:
@@ -82,11 +82,11 @@ aliases:
          || echo "Error in uploading coverage reports to codecov.io."
 
 jobs:
-  "trusty-backend-frontend-py34":
+  "xenial-backend-frontend-python3.5":
     docker:
-      # This is built from tools/circleci/images/trusty/Dockerfile .
-      # Trusty ships with Python 3.4.
-      - image: gregprice/circleci:trusty-python-5.test
+      # This is built from tools/circleci/images/xenial/Dockerfile .
+      # Xenial ships with Python 3.5.
+      - image: gregprice/circleci:xenial-python-4.test
 
     working_directory: ~/zulip
 
@@ -101,33 +101,22 @@ jobs:
       - *save_cache_requirements
       - *run_backend_tests
       - *run_frontend_tests
+      # We only need to upload coverage reports on whichever platform
+      # runs the frontend tests.
       - *upload_coverage_report
 
-      # - store_artifacts:  # TODO
-      #     path: var/casper/
-      #     # also /tmp/zulip-test-event-log/
-      #     destination: test-reports
+      - store_artifacts:
+          path: ./var/casper/
+          destination: casper
 
-  "xenial-backend-py35":
-    docker:
-      # This is built from tools/circleci/images/xenial/Dockerfile .
-      # Xenial ships with Python 3.5.
-      - image: gregprice/circleci:xenial-python-4.test
+      - store_artifacts:    
+          path: ../../../tmp/zulip-test-event-log/
+          destination: test-reports
 
-    working_directory: ~/zulip
+      - store_test_results:
+            path: ./var/xunit-test-results/casper/
 
-    steps:
-      - checkout
-      - *create_cache_directories
-      - *restore_cache_package_json
-      - *restore_cache_requirements
-      - *install_dependencies
-      - *save_cache_package_json
-      - *save_cache_requirements
-      - *run_backend_tests
-      - *upload_coverage_report
-
-  "bionic-backend-py36":
+  "bionic-backend-python3.6":
     docker:
       # This is built from tools/circleci/images/bionic/Dockerfile .
       # Bionic ships with Python 3.6.
@@ -145,7 +134,7 @@ jobs:
           command: |
               # Temporary hack till `sudo service redis-server start` gets fixes in Bionic. See
               # https://chat.zulip.org/#narrow/stream/3-backend/topic/Ubuntu.20bionic.20CircleCI
-              redis-server --daemonize yes
+              sudo sed -i '/^bind/s/bind.*/bind 0.0.0.0/' /etc/redis/redis.conf
 
       - *restore_cache_package_json
       - *restore_cache_requirements
@@ -153,12 +142,10 @@ jobs:
       - *save_cache_package_json
       - *save_cache_requirements
       - *run_backend_tests
-      - *upload_coverage_report
 
 workflows:
   version: 2
   build:
     jobs:
-      - "trusty-backend-frontend-py34"
-      - "xenial-backend-py35"
-      - "bionic-backend-py36"
+      - "xenial-backend-frontend-python3.5"
+      - "bionic-backend-python3.6"

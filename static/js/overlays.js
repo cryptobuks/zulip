@@ -1,10 +1,6 @@
-var overlays = (function () {
-
-var exports = {};
-
-var active_overlay;
-var close_handler;
-var open_overlay_name;
+let active_overlay;
+let close_handler;
+let open_overlay_name;
 
 function reset_state() {
     active_overlay = undefined;
@@ -106,6 +102,7 @@ exports.open_modal = function (name) {
     $('.overlay.show').attr("style", "pointer-events: none");
     // Remove previous alert messsages from modal, if exists.
     $("#" + name).find(".alert").hide();
+    $("#" + name).find(".alert-notification").html("");
 };
 
 exports.close_overlay = function (name) {
@@ -185,7 +182,7 @@ exports.close_for_hash_change = function () {
 };
 
 exports.open_settings = function () {
-    overlays.open_overlay({
+    exports.open_overlay({
         name: 'settings',
         overlay: $("#settings_overlay_container"),
         on_close: function () {
@@ -196,7 +193,7 @@ exports.open_settings = function () {
 
 exports.initialize = function () {
     $("body").on("click", ".overlay, .overlay .exit", function (e) {
-        var $target = $(e.target);
+        let $target = $(e.target);
 
         // if the target is not the .overlay element, search up the node tree
         // until it is found.
@@ -207,7 +204,7 @@ exports.initialize = function () {
             return;
         }
 
-        var target_name = $target.attr("data-overlay");
+        const target_name = $target.attr("data-overlay");
 
         exports.close_overlay(target_name);
 
@@ -216,11 +213,4 @@ exports.initialize = function () {
     });
 };
 
-return exports;
-
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = overlays;
-}
-window.overlays = overlays;
+window.overlays = exports;

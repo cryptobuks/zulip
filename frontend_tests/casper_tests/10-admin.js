@@ -1,4 +1,4 @@
-var common = require('../casper_lib/common.js').common;
+var common = require('../casper_lib/common.js');
 
 common.start_and_log_in();
 
@@ -85,63 +85,149 @@ function submit_permissions_change() {
     casper.click('#org-submit-other-permissions');
 }
 
-// Test setting limiting stream creation to administrators
+// Test setting create streams policy to 'admins only'.
 casper.then(function () {
-    casper.test.info("Test setting limiting stream creation to administrators");
-    casper.waitUntilVisible("#id_realm_create_stream_permission", function () {
+    casper.test.info("Test setting create streams policy to 'admins only'.");
+    casper.waitUntilVisible("#id_realm_create_stream_policy", function () {
         casper.evaluate(function () {
-            $("#id_realm_create_stream_permission").val("by_admins_only").change();
+            $("#id_realm_create_stream_policy").val("by_admins_only").change();
         });
         submit_permissions_change();
     });
 });
 
 casper.then(function () {
-    // Test setting was activated
+    // Test that save worked.
     casper.waitUntilVisible('#org-submit-other-permissions[data-status="saved"]', function () {
-        casper.test.assertSelectorHasText('#org-submit-other-permissions',
-                                          'Saved');
+        casper.test.assertSelectorHasText('#org-submit-other-permissions', 'Saved');
     });
 });
 
+// Test setting create streams policy to 'members and admins'.
 casper.then(function () {
-    casper.waitUntilVisible("#id_realm_create_stream_permission", function () {
+    casper.test.info("Test setting create streams policy to 'members and admins'.");
+    casper.waitUntilVisible("#id_realm_create_stream_policy", function () {
         casper.evaluate(function () {
-            $("#id_realm_create_stream_permission").val("by_admin_user_with_custom_time").change();
-            $("#id_realm_waiting_period_threshold").val('6');
+            $("#id_realm_create_stream_policy").val("by_members").change();
         });
         submit_permissions_change();
     });
 });
 
 casper.then(function () {
-    // Test setting was activated
+    // Test that save worked.
     casper.waitUntilVisible('#org-submit-other-permissions[data-status="saved"]', function () {
-        casper.test.assertSelectorHasText('#org-submit-other-permissions',
-                                          'Saved');
+        casper.test.assertSelectorHasText('#org-submit-other-permissions', 'Saved');
     });
 });
 
-casper.waitUntilVisible('#id_realm_create_stream_permission', function () {
-    // Test Setting was saved
-    casper.test.assertEval(function () {
-        return $('input[type="text"][id="id_realm_waiting_period_threshold"]').val() === '6';
-    }, 'Waiting period threshold set to 6 days');
-
-
-    // Deactivate setting
-
-    casper.evaluate(function () {
-        $("#id_realm_create_stream_permission").val("by_admins_only").change();
+// Test setting create streams policy to 'full members'.
+casper.then(function () {
+    casper.test.info("Test setting create streams policy to 'waiting period.");
+    casper.waitUntilVisible("#id_realm_create_stream_policy", function () {
+        casper.evaluate(function () {
+            $("#id_realm_create_stream_policy").val("by_full_members").change();
+        });
+        submit_permissions_change();
     });
-    submit_permissions_change();
 });
 
 casper.then(function () {
-    // Test setting was activated
+    // Test that save worked.
     casper.waitUntilVisible('#org-submit-other-permissions[data-status="saved"]', function () {
-        casper.test.assertSelectorHasText('#org-submit-other-permissions',
-                                          'Saved');
+        casper.test.assertSelectorHasText('#org-submit-other-permissions', 'Saved');
+    });
+});
+
+// Test setting invite to streams policy to 'admins only'.
+casper.then(function () {
+    casper.test.info("Test setting invite to streams policy to 'admins only'.");
+    casper.waitUntilVisible("#id_realm_invite_to_stream_policy", function () {
+        casper.evaluate(function () {
+            $("#id_realm_invite_to_stream_policy").val("by_admins_only").change();
+        });
+        submit_permissions_change();
+    });
+});
+
+casper.then(function () {
+    // Test that save worked.
+    casper.waitUntilVisible('#org-submit-other-permissions[data-status="saved"]', function () {
+        casper.test.assertSelectorHasText('#org-submit-other-permissions', 'Saved');
+    });
+});
+
+// Test setting invite to streams policy to 'members and admins'.
+casper.then(function () {
+    casper.test.info("Test setting invite to streams policy to 'members and admins'.");
+    casper.waitUntilVisible("#id_realm_invite_to_stream_policy", function () {
+        casper.evaluate(function () {
+            $("#id_realm_invite_to_stream_policy").val("by_members").change();
+        });
+        submit_permissions_change();
+    });
+});
+
+casper.then(function () {
+    // Test that save worked.
+    casper.waitUntilVisible('#org-submit-other-permissions[data-status="saved"]', function () {
+        casper.test.assertSelectorHasText('#org-submit-other-permissions', 'Saved');
+    });
+});
+
+// Test setting invite to streams policy to 'full members'.
+casper.then(function () {
+    casper.test.info("Test setting invite to streams policy to 'waiting period'.");
+    casper.waitUntilVisible("#id_realm_invite_to_stream_policy", function () {
+        casper.evaluate(function () {
+            $("#id_realm_invite_to_stream_policy").val("by_full_members").change();
+        });
+        submit_permissions_change();
+    });
+});
+
+casper.then(function () {
+    // Test that save worked.
+    casper.waitUntilVisible('#org-submit-other-permissions[data-status="saved"]', function () {
+        casper.test.assertSelectorHasText('#org-submit-other-permissions', 'Saved');
+    });
+});
+
+// Test setting new user threshold to three days.
+casper.then(function () {
+    casper.test.info("Test setting new user threshold to three days.");
+    casper.waitUntilVisible("#id_realm_waiting_period_setting", function () {
+        casper.evaluate(function () {
+            $("#id_realm_waiting_period_setting").val("three_days").change();
+        });
+        submit_permissions_change();
+    });
+});
+
+casper.then(function () {
+    // Test that save worked.
+    casper.waitUntilVisible('#org-submit-other-permissions[data-status="saved"]', function () {
+        casper.test.assertSelectorHasText('#org-submit-other-permissions', 'Saved');
+        casper.test.assertNotVisible('#id_realm_waiting_period_threshold');
+    });
+});
+
+// Test setting new user threshold to N days.
+casper.then(function () {
+    casper.test.info("Test setting new user threshold to N days.");
+    casper.waitUntilVisible("#id_realm_waiting_period_setting", function () {
+        casper.evaluate(function () {
+            $("#id_realm_waiting_period_setting").val("custom_days").change();
+        });
+        submit_permissions_change();
+    });
+});
+
+casper.then(function () {
+    // Test that save worked.
+    casper.waitUntilVisible('#org-submit-other-permissions[data-status="saved"]', function () {
+        casper.test.assertSelectorHasText('#org-submit-other-permissions', 'Saved');
+        casper.test.assertVisible('#id_realm_waiting_period_threshold');
     });
 });
 
@@ -190,8 +276,8 @@ casper.then(function () {
 });
 
 casper.then(function () {
-    casper.waitUntilVisible('#admin-profile-field-status img', function () {
-        casper.test.assertSelectorHasText('div#admin-profile-field-status', 'Saved');
+    casper.waitUntilVisible('#admin-add-profile-field-status img', function () {
+        casper.test.assertSelectorHasText('div#admin-add-profile-field-status', 'Saved');
     });
     casper.waitUntilVisible('.profile-field-row span.profile_field_name', function () {
         casper.test.assertSelectorHasText('.profile-field-row span.profile_field_name', 'Teams');
@@ -346,7 +432,7 @@ casper.then(function () {
         }, false);
         casper.click("#realm_icon_upload_button");
         casper.waitWhileVisible("#upload_icon_spinner .loading_indicator_spinner", function () {
-            casper.test.assertExists('img#realm-settings-icon[src^="/user_avatars/1/realm/icon.png?version=2"]');
+            casper.test.assertExists('img#realm-settings-icon[src^="/user_avatars/2/realm/icon.png?version=2"]');
             casper.test.assertEqual(casper.visible('#realm_icon_delete_button'), true);
         });
     });
@@ -388,6 +474,8 @@ casper.then(function () {
     casper.click("li[data-section='auth-methods']");
     casper.waitUntilVisible(".method_row[data-method='Google'] input[type='checkbox'] + span", function () {
         casper.click(".method_row[data-method='Google'] input[type='checkbox'] + span");
+        casper.test.assertSelectorHasText('#org-submit-auth_settings', "Save");
+        casper.click('#org-submit-auth_settings');
     });
 });
 

@@ -4,7 +4,7 @@ This section guides first-time contributors through installing the
 Zulip development environment on Windows, macOS, Ubuntu and Debian.
 
 The recommended method for installing the Zulip development environment is to use
-Vagrant with VirtualBox on Windows and macOS, and Vagrant with LXC on
+Vagrant with VirtualBox on Windows and macOS, and Vagrant with Docker on
 Ubuntu. This method creates a virtual machine (for Windows and macOS)
 or a Linux container (for Ubuntu) inside which the Zulip server and
 all related services will run.
@@ -17,17 +17,18 @@ Contents:
 * [Step 3: Start the development environment](#step-3-start-the-development-environment)
 * [Step 4: Developing](#step-4-developing)
 * [Troubleshooting and Common Errors](#troubleshooting-and-common-errors)
+* [Specifying an Ubuntu mirror](#specifying-an-ubuntu-mirror)
 * [Specifying a proxy](#specifying-a-proxy)
+* [Customizing CPU and RAM allocation](#customizing-cpu-and-ram-allocation)
 
 **If you encounter errors installing the Zulip development
-environment,** check
-[Troubleshooting and Common Errors](#troubleshooting-and-common-errors). If
-that doesn't help, please visit
-[#provision help](https://chat.zulip.org/#narrow/stream/21-provision-help)
-in the [Zulip development community server](../contributing/chat-zulip-org.html) for
-real-time help, send a note to the
-[Zulip-devel Google group](https://groups.google.com/forum/#!forum/zulip-devel)
-or [file an issue](https://github.com/zulip/zulip/issues).
+environment,** check [Troubleshooting and Common
+Errors](#troubleshooting-and-common-errors). If that doesn't help,
+please visit [#provision
+help](https://chat.zulip.org/#narrow/stream/21-provision-help) in the
+[Zulip development community
+server](../contributing/chat-zulip-org.md) for real-time help or
+[file an issue](https://github.com/zulip/zulip/issues).
 
 When reporting your issue, please include the following information:
 
@@ -47,13 +48,13 @@ a proxy to access the internet.)
 
 - **All**: 2GB available RAM, Active broadband internet connection, [GitHub account][set-up-git].
 - **macOS**: macOS (10.11 El Capitan or newer recommended)
-- **Ubuntu LTS**: 18.04, 16.04, or 14.04 64-bit
+- **Ubuntu LTS**: 18.04 or 16.04 64-bit
   - or **Debian**: 9.0 "stretch" 64-bit
 - **Windows**: Windows 64-bit (Win 10 recommended), hardware
   virtualization enabled (VT-X or AMD-V), administrator access.
 
 Other Linux distributions work great too, but we don't maintain
-documentation for installing Vagrant and LXC on those systems, so
+documentation for installing Vagrant and Docker on those systems, so
 you'll need to find a separate guide and crib from the Debian/Ubuntu
 docs.
 
@@ -94,112 +95,65 @@ Now you are ready for [Step 2: Get Zulip Code.](#step-2-get-zulip-code).
 
 #### Ubuntu
 
-If you're in a hurry, you can copy and paste the following into your terminal
-after which you can jump to [Step 2: Get Zulip Code](#step-2-get-zulip-code):
-
-```
-sudo apt-get -y purge vagrant && \
-wget https://releases.hashicorp.com/vagrant/2.2.4/vagrant_2.2.4_x86_64.deb && \
-sudo dpkg -i vagrant*.deb && \
-sudo apt-get -y install build-essential git ruby lxc lxc-templates cgroup-lite redir && \
-vagrant plugin install vagrant-lxc && \
-vagrant lxc sudoers
-```
-
-For a step-by-step explanation, read on.
-
-##### 1. Install Vagrant
-
-For Ubuntu 18.04 Bionic or newer, you can just install from `apt`:
-
-```
-sudo apt install vagrant
-```
-
-For Ubuntu 16.04 Xenial and 14.04 Trusty, you'll need a more recent
-version of Vagrant than what's available in the official Ubuntu
-repositories.
-
-First uninstall any vagrant package you may have installed from the Ubuntu
-repository:
+##### 1. Install Vagrant, Docker, and Git
 
 ```
 christie@ubuntu-desktop:~
-$ sudo apt-get purge vagrant
+$ sudo apt install vagrant docker.io git
 ```
 
-Now download and install the .deb package for [Vagrant][vagrant-dl].  E.g.:
-
-```
-christie@ubuntu-desktop:~
-$ wget https://releases.hashicorp.com/vagrant/2.2.4/vagrant_2.2.4_x86_64.deb
-
-christie@ubuntu-desktop:~
-$ sudo dpkg -i vagrant*.deb
-```
-
-##### 2. Install remaining dependencies
-
-Now install git and lxc-related packages:
+##### 2. Add yourself to the `docker` group:
 
 ```
 christie@ubuntu-desktop:~
-$ sudo apt-get install build-essential git ruby lxc lxc-templates cgroup-lite redir
+$ sudo adduser $USER docker
+Adding user `christie' to group `docker' ...
+Adding user christie to group docker
+Done.
 ```
 
-##### 3. Install the vagrant lxc plugin:
-
-```
-christie@ubuntu-desktop:~
-$ vagrant plugin install vagrant-lxc
-Installing the 'vagrant-lxc' plugin. This can take a few minutes...
-Installed the plugin 'vagrant-lxc (1.2.1)'!
-```
-
-If you encounter an error when trying to install the vagrant-lxc plugin, [see
-this](#nomethoderror).
-
-##### 4. Configure sudo to be passwordless
-
-Finally, [configure sudo to be passwordless when using Vagrant LXC][avoiding-sudo]:
+You will need to reboot for this change to take effect.  If it worked,
+you will see `docker` in your list of groups:
 
 ```
 christie@ubuntu-desktop:~
-$ vagrant lxc sudoers
-[sudo] password for christie:
+$ groups | grep docker
+christie adm cdrom sudo dip plugdev lpadmin sambashare docker
 ```
 
-If you encounter an error running `vagrant lxc sudoers`, [see
-this](#permissions-errors).
+##### 3. Make sure the Docker daemon is running:
+
+If you had previously installed and removed an older version of
+Docker, an [Ubuntu
+bug](https://bugs.launchpad.net/ubuntu/+source/docker.io/+bug/1844894)
+may prevent Docker from being automatically enabled and started after
+installation.  You can check using the following:
+
+```
+$ systemctl status docker
+● docker.service - Docker Application Container Engine
+   Loaded: loaded (/lib/systemd/system/docker.service; enabled; vendor preset: enabled)
+   Active: active (running) since Mon 2019-07-15 23:20:46 IST; 18min ago
+```
+
+If the service is not running, you'll see `Active: inactive (dead)` on
+the second line, and will need to enable and start the Docker service
+using the following:
+
+```
+sudo systemctl unmask docker
+sudo systemctl enable docker
+sudo systemctl start docker
+```
 
 Now you are ready for [Step 2: Get Zulip Code.](#step-2-get-zulip-code)
 
 #### Debian
 
-The setup for Debian 9.0 "stretch" is very similar to that
-[for Ubuntu above](#ubuntu).  Follow those instructions, except with
-the following differences:
-
-**Apt package list**.  In "2. Install remaining dependencies", the
-command to install the dependencies is a bit shorter:
-
-```
-christie@ubuntu-desktop:~
-$ sudo apt-get install build-essential git ruby lxc redir
-```
-
-**Set up LXC networking**.  After completing "2. Install remaining
-dependencies", you will have to set up networking for LXC containers,
-because Debian's packaging for LXC does not ship any default
-network setup for them.  You can do this by
-[following the steps][lxc-networking-quickstart] outlined in
-[Debian's LXC docs](https://wiki.debian.org/LXC#network_setup).
-
-[lxc-networking-quickstart]: https://wiki.debian.org/LXC#Minimal_changes_to_set_up_networking_for_LXC_for_Debian_.2BIBw-stretch.2BIB0_.28testing.29
-
-Then return to the next step in the Ubuntu instructions above.  After
-finishing those steps, you will be ready for
-[Step 2: Get Zulip Code](#step-2-get-zulip-code).
+The setup for Debian is very similar to that [for Ubuntu
+above](#ubuntu), except that the `docker.io` package is only available
+in Debian 10 and later; for Debian 9, see [Docker CE for
+Debian](https://docs.docker.com/install/linux/docker-ce/debian/).
 
 #### Windows 10
 
@@ -318,20 +272,23 @@ environment.](#step-3-start-the-development-environment)
 ### Step 3: Start the development environment
 
 Change into the zulip directory and tell vagrant to start the Zulip
-development environment with `vagrant up`.
+development environment with `vagrant up`:
 
 ```
-christie@win10 ~
-$ cd zulip
+# On Windows or macOS:
+cd zulip
+vagrant plugin install vagrant-vbguest
+vagrant up --provider=virtualbox
 
-christie@win10 ~/zulip
-$ vagrant up
+# On Linux:
+cd zulip
+vagrant up --provider=docker
 ```
 
 The first time you run this command it will take some time because vagrant
 does the following:
 
-- downloads the base Ubuntu 14.04 virtual machine image (for macOS and Windows)
+- downloads the base Ubuntu 18.04 virtual machine image (for macOS and Windows)
   or container (for Ubuntu)
 - configures this virtual machine/container for use with Zulip,
 - creates a shared directory mapping your clone of the Zulip code inside the
@@ -340,7 +297,7 @@ does the following:
   downloads all required dependencies, sets up the python environment for
   the Zulip development server, and initializes a default test
   database.  We call this process "provisioning", and it is documented
-  in some detail in our [dependencies documentation](../subsystems/dependencies.html).
+  in some detail in our [dependencies documentation](../subsystems/dependencies.md).
 
 You will need an active internet connection during the entire
 process. (See [Specifying a proxy](#specifying-a-proxy) if you need a
@@ -352,7 +309,7 @@ documented in the
 [Troubleshooting and Common Errors](#troubleshooting-and-common-errors)
 section.  If that doesn't help, please visit
 [#provision help](https://chat.zulip.org/#narrow/stream/21-provision-help)
-in the [Zulip development community server](../contributing/chat-zulip-org.html) for
+in the [Zulip development community server](../contributing/chat-zulip-org.md) for
 real-time help.
 
 On Windows, you will see `The system cannot find the path specified.` message
@@ -366,36 +323,10 @@ christie@win10 ~/zulip
 $ vagrant ssh
 ```
 
-You should see something like this on Windows and macOS:
+You should see output that starts like this:
 
 ```
-Welcome to Ubuntu 14.04.4 LTS (GNU/Linux 3.13.0-85-generic x86_64)
-
- * Documentation:  https://help.ubuntu.com/
-
-  System information as of Wed May  4 21:45:43 UTC 2016
-
-  System load:  0.61              Processes:           88
-  Usage of /:   3.5% of 39.34GB   Users logged in:     0
-  Memory usage: 7%                IP address for eth0: 10.0.2.15
-  Swap usage:   0%
-
-  Graph this data and manage this system at:
-    https://landscape.canonical.com/
-
-  Get cloud support with Ubuntu Advantage Cloud Guest:
-    http://www.ubuntu.com/business/services/cloud
-
-0 packages can be updated.
-0 updates are security updates.
-```
-
-Or something as brief as this in the case of Ubuntu:
-
-```
-Welcome to Ubuntu 14.04.1 LTS (GNU/Linux 4.4.0-21-generic x86_64)
-
- * Documentation:  https://help.ubuntu.com/
+Welcome to Ubuntu 18.04.2 LTS (GNU/Linux 4.15.0-54-generic x86_64)
 ```
 
 Congrats, you're now inside the Zulip development environment!
@@ -408,7 +339,7 @@ provisioning failed and you should look at the
 Next, start the Zulip server:
 
 ```
-(zulip-py3-venv)vagrant@vagrant-ubuntu-trusty-64:/srv/zulip
+(zulip-py3-venv) vagrant@ubuntu-bionic:/srv/zulip
 $ ./tools/run-dev.py
 ```
 
@@ -489,7 +420,7 @@ It's good to have the terminal running `run-dev.py` up as you work since error
 messages including tracebacks along with every backend request will be printed
 there.
 
-See [Logging](../subsystems/logging.html) for further details on the run-dev.py console
+See [Logging](../subsystems/logging.md) for further details on the run-dev.py console
 output.
 
 #### Committing and pushing changes with git
@@ -518,7 +449,7 @@ After provisioning, you'll want to
 
 If you run into any trouble, the
 [#provision help](https://chat.zulip.org/#narrow/stream/21-provision-help)
-in the [Zulip development community server](../contributing/chat-zulip-org.html) for
+in the [Zulip development community server](../contributing/chat-zulip-org.md) for
 is a great place to ask for help.
 
 #### Rebuilding the development environment
@@ -554,7 +485,7 @@ From the window where run-dev.py is running:
 2016-05-04 18:33:13,330 INFO     127.0.0.1       GET     200  92ms /register/ (unauth via ?)
 ^C
 KeyboardInterrupt
-(zulip-py3-venv)vagrant@vagrant-ubuntu-trusty-64:/srv/zulip$ exit
+(zulip-py3-venv) vagrant@ubuntu-bionic:/srv/zulip$ exit
 logout
 Connection to 127.0.0.1 closed.
 christie@win10 ~/zulip
@@ -581,16 +512,17 @@ Check out the Vagrant documentation to learn more about
 
 #### Resuming the development environment
 
-When you're ready to work on Zulip again, run `vagrant up`. You will also need
-to connect to the virtual machine with `vagrant ssh` and re-start the Zulip
-server:
+When you're ready to work on Zulip again, run `vagrant up` (no need to
+pass the `--provider` option required above). You will also need to
+connect to the virtual machine with `vagrant ssh` and re-start the
+Zulip server:
 
 ```
 christie@win10 ~/zulip
 $ vagrant up
 $ vagrant ssh
 
-(zulip-py3-venv)vagrant@vagrant-ubuntu-trusty-64:/srv/zulip
+(zulip-py3-venv) vagrant@ubuntu-bionic:/srv/zulip
 $ ./tools/run-dev.py
 ```
 
@@ -615,9 +547,7 @@ If these solutions aren't working for you or you encounter an issue not
 documented below, there are a few ways to get further help:
 
 * Ask in [#provision help](https://chat.zulip.org/#narrow/stream/21-provision-help)
-  in the [Zulip development community server](../contributing/chat-zulip-org.html),
-* send a note to the [Zulip-devel Google
-  group](https://groups.google.com/forum/#!forum/zulip-devel), or
+  in the [Zulip development community server](../contributing/chat-zulip-org.md).
 * [File an issue](https://github.com/zulip/zulip/issues).
 
 When reporting your issue, please include the following information:
@@ -671,12 +601,12 @@ was:
 If this error starts happening unexpectedly, then just run:
 
 ```
-vagrant reload
+vagrant halt
+vagrant up
 ```
 
-This is equivalent of running a halt followed by an up (aka rebooting
-the guest).  After this, you can do `vagrant provision` and `vagrant
-ssh`.
+to reboot the guest.  After this, you can do `vagrant provision` and
+`vagrant ssh`.
 
 #### ssl read error
 
@@ -714,7 +644,7 @@ ssh_exchange_identification: Connection closed by remote host
 ```
 
 It usually means the Vagrant guest is not running, which is usually
-solved by rebooting the Vagrant guest via `vagrant reload`.  See
+solved by rebooting the Vagrant guest via `vagrant halt; vagrant up`.  See
 [Vagrant was unable to communicate with the guest machine](#vagrant-was-unable-to-communicate-with-the-guest-machine)
 for more details.
 
@@ -734,9 +664,17 @@ If you receive the following error while running `vagrant up`:
 
 Then Vagrant was not able to create a symbolic link.
 
-First, if you are using Windows, **make sure you have run Git BASH (or Cygwin)
-as an administrator**. By default, only administrators can create symbolic
-links on Windows.
+First, if you are using Windows, **make sure you have run Git BASH (or
+Cygwin) as an administrator**. By default, only administrators can
+create symbolic links on Windows.  Additionally [UAC][windows-uac], a
+Windows feature intended to limit the impact of malware, can prevent
+even administrator accounts from creating symlinks.  [Turning off
+UAC][disable-uac] will allow you to create symlinks. You can also try
+some of the solutions mentioned
+[here](https://superuser.com/questions/124679/how-do-i-create-a-link-in-windows-7-home-premium-as-a-regular-user).
+
+[windows-uac]: https://docs.microsoft.com/en-us/windows/security/identity-protection/user-account-control/how-user-account-control-works
+[disable-uac]: https://stackoverflow.com/questions/15320550/why-is-secreatesymboliclinkprivilege-ignored-on-windows-8
 
 Second, VirtualBox does not enable symbolic links by default. Vagrant
 starting with version 1.6.0 enables symbolic links for VirtualBox shared
@@ -835,8 +773,7 @@ the timeout ("config.vm.boot_timeout") value.
 
 This has a range of possible causes, that usually amount to a bug in
 Virtualbox or Vagrant.  If you see this error, you usually can fix it
-by rebooting the guest via `vagrant reload` (or equivalently, `vagrant
-halt` followed by `vagrant up`):
+by rebooting the guest via `vagrant halt; vagrant up`.
 
 #### Vagrant up fails with subprocess.CalledProcessError
 
@@ -905,69 +842,9 @@ Done in 23.50s.
 These are warnings produced by spammy third party JavaScript packages.
 It is okay to proceed and start the Zulip server.
 
-#### vagrant-lxc errors
-
-##### Permissions errors
-
-When building the development environment using Vagrant and the LXC provider,
-if you encounter permissions errors, you may need to `chown -R 1000:$(id -g)
-/path/to/zulip` on the host before running `vagrant up` in order to ensure that
-the synced directory has the correct owner during provision. This issue will
-arise if you run `id username` on the host where `username` is the user running
-Vagrant and the output is anything but 1000.  This seems to be caused by
-Vagrant behavior; for more information, see [the vagrant-lxc FAQ entry about
-shared folder permissions][lxc-sf].
-
-
-##### NoMethodError
-
-If you see the following error when you try to install the vagrant-lxc plugin:
-
-```
-/usr/lib/ruby/2.3.0/rubygems/specification.rb:946:in `all=': undefined method `group_by' for nil:NilClass (NoMethodError)
-  from /usr/lib/ruby/vendor_ruby/vagrant/bundler.rb:275:in `with_isolated_gem'
-  from /usr/lib/ruby/vendor_ruby/vagrant/bundler.rb:231:in `internal_install'
-  from /usr/lib/ruby/vendor_ruby/vagrant/bundler.rb:102:in `install'
-  from /usr/lib/ruby/vendor_ruby/vagrant/plugin/manager.rb:62:in `block in install_plugin'
-  from /usr/lib/ruby/vendor_ruby/vagrant/plugin/manager.rb:72:in `install_plugin'
-  from /usr/share/vagrant/plugins/commands/plugin/action/install_gem.rb:37:in `call'
-  from /usr/lib/ruby/vendor_ruby/vagrant/action/warden.rb:34:in `call'
-  from /usr/lib/ruby/vendor_ruby/vagrant/action/builder.rb:116:in `call'
-  from /usr/lib/ruby/vendor_ruby/vagrant/action/runner.rb:66:in `block in run'
-  from /usr/lib/ruby/vendor_ruby/vagrant/util/busy.rb:19:in `busy'
-  from /usr/lib/ruby/vendor_ruby/vagrant/action/runner.rb:66:in `run'
-  from /usr/share/vagrant/plugins/commands/plugin/command/base.rb:14:in `action'
-  from /usr/share/vagrant/plugins/commands/plugin/command/install.rb:32:in `block in execute'
-  from /usr/share/vagrant/plugins/commands/plugin/command/install.rb:31:in `each'
-  from /usr/share/vagrant/plugins/commands/plugin/command/install.rb:31:in `execute'
-  from /usr/share/vagrant/plugins/commands/plugin/command/root.rb:56:in `execute'
-  from /usr/lib/ruby/vendor_ruby/vagrant/cli.rb:42:in `execute'
-  from /usr/lib/ruby/vendor_ruby/vagrant/environment.rb:268:in `cli'
-  from /usr/bin/vagrant:173:in `<main>'
-```
-
-And you have vagrant version 1.8.1, then you need to patch vagrant manually.
-See [this post](https://github.com/mitchellh/vagrant/issues/7073) for an
-explanation of the issue, which should be fixed when Vagrant 1.8.2 is released.
-
-In the meantime, read [this
-post](http://stackoverflow.com/questions/36811863/cant-install-vagrant-plugins-in-ubuntu-16-04/36991648#36991648)
-for how to create and apply the patch.
-
-It will look something like this:
-
-```
-christie@xenial:~
-$ sudo patch --directory /usr/lib/ruby/vendor_ruby/vagrant < vagrant-plugin.patch
-patching file bundler.rb
-```
 #### VT-X unavailability error
 
 Users who are unable to do "vagrant up" due to a VT-X unavailability error need to disable "Hyper-V" to get it to work.
-
-#### Permissions errors when running the test suite in LXC
-
-See ["Possible testing issues"](../testing/testing.html#possible-testing-issues).
 
 #### Mounting NFS fails on macOS Mojave
 
@@ -1043,6 +920,20 @@ implementation.
 You can read more about this
 [here](https://github.com/hashicorp/vagrant/issues/8788).
 
+### Specifying an Ubuntu mirror
+
+Bringing up a development environment for the first time involves
+downloading many packages from the Ubuntu archive.  The Ubuntu cloud
+images use the global mirror `http://archive.ubuntu.com/ubuntu/` by
+default, but you may find that you can speed up the download by using
+a local mirror closer to your location.  To do this, create
+`~/.zulip-vagrant-config` and add a line like this, replacing the URL
+as appropriate:
+
+```
+UBUNTU_MIRROR http://us.archive.ubuntu.com/ubuntu/
+```
+
 ### Specifying a proxy
 
 If you need to use a proxy server to access the Internet, you will
@@ -1059,16 +950,33 @@ it (with the appropriate values in it for your proxy):
 ```
 HTTP_PROXY http://proxy_host:port
 HTTPS_PROXY http://proxy_host:port
-NO_PROXY localhost,127.0.0.1,.example.com
+NO_PROXY localhost,127.0.0.1,.example.com,.zulipdev.com
 ```
+
+For proxies that require authentication, the config will be a bit more
+complex, e.g.:
+
+```
+HTTP_PROXY http://userName:userPassword@192.168.1.1:8080
+HTTPS_PROXY http://userName:userPassword@192.168.1.1:8080
+NO_PROXY localhost,127.0.0.1,.example.com,.zulipdev.com
+```
+
+You'll want to **double-check** your work for mistakes (a common one
+is using `https://` when your proxy expects `http://`).  Invalid proxy
+configuration can cause confusing/weird exceptions; if you're using a
+proxy and get an error, the first thing you should investigate is
+whether you entered your proxy configuration correctly.
 
 Now run `vagrant up` in your terminal to install the development
 server. If you ran `vagrant up` before and failed, you'll need to run
 `vagrant destroy` first to clean up the failed installation.
 
-**If you no longer want to use proxy with Vagrant, set values of HTTP_PROXY
-and HTTPS_PROXY to `""` in `~/.zulip-vagrant-config` file and
-restart Vagrant.**
+If you no longer want to use proxy with Vagrant, you can remove the
+`HTTP_PROXY` and `HTTPS_PROXY` lines in `~/.zulip-vagrant-config` and
+then do a `vagrant reload`.
+
+### Using a different port for Vagrant
 
 You can also change the port on the host machine that Vagrant uses by
 adding to your `~/.zulip-vagrant-config` file.  E.g. if you set:
@@ -1077,7 +985,7 @@ adding to your `~/.zulip-vagrant-config` file.  E.g. if you set:
 HOST_PORT 9971
 ```
 
-(and halt and restart the Vagrant guest), then you would visit
+(and `vagrant reload` to apply the new configuration), then you would visit
 http://localhost:9971/ to connect to your development server.
 
 If you'd like to be able to connect to your development environment from other
@@ -1088,24 +996,61 @@ machines than the VM host, you can manually set the host IP address in the
 HOST_IP_ADDR 0.0.0.0
 ```
 
-(and restart the Vagrant guest), your host IP would be 0.0.0.0, a special value
-for the IP address that means any IP address can connect to your development server.
+(and restart the Vagrant guest with `vagrant reload`), your host IP would be
+0.0.0.0, a special value for the IP address that means any IP address can
+connect to your development server.
 
+### Customizing CPU and RAM allocation
+
+When running Vagrant using a VM-based provider such as VirtualBox or
+VMWare Fusion, CPU and RAM resources must be explicitly allocated to
+the guest system (with Docker and other container-based Vagrant
+providers, explicit allocation is unnecessary and the settings
+described here are ignored).
+
+Our default Vagrant settings allocate 2 cpus with 2GiB of memory for
+the guest, which is sufficient to run everything in the development
+environment.  If your host system has more CPUs, or you have enough
+RAM that you'd like to allocate more than 2GiB to the guest, you can
+improve performance of the Zulip development environment by allocating
+more resources.
+
+To do so, create a `~/.zulip-vagrant-config` file containing the
+following lines:
+
+```
+GUEST_CPUS <number of cpus>
+GUEST_MEMORY_MB <system memory (in MB)>
+```
+
+For example:
+
+```
+GUEST_CPUS 4
+GUEST_MEMORY_MB 8192
+```
+
+would result in an allocation of 4 cpus and 8 GiB of memory to the
+guest VM.
+
+After changing the configuration, run `vagrant reload` to reboot the
+guest VM with your new configuration.
+
+If at any time you wish to revert back to the default settings, simply
+remove the `GUEST_CPUS` and `GUEST_MEMORY_MB` lines from
+`~/.zulip-vagrant-config`.
 
 [cygwin-dl]: http://cygwin.com/
 [vagrant-dl]: https://www.vagrantup.com/downloads.html
-[vagrant-lxc]: https://github.com/fgrehm/vagrant-lxc
 [vbox-dl]: https://www.virtualbox.org/wiki/Downloads
 [vmware-fusion-dl]: http://www.vmware.com/products/fusion.html
 [vagrant-vmware-fusion-dl]: https://www.vagrantup.com/vmware/
-[avoiding-sudo]: https://github.com/fgrehm/vagrant-lxc#avoiding-sudo-passwords
-[install-advanced]: ../development/setup-advanced.html
-[lxc-sf]: https://github.com/fgrehm/vagrant-lxc/wiki/FAQ#help-my-shared-folders-have-the-wrong-owner
-[rtd-git-guide]: ../git/index.html
-[rtd-testing]: ../testing/testing.html
-[rtd-using-dev-env]: using.html
-[rtd-dev-remote]: remote.html
+[install-advanced]: ../development/setup-advanced.md
+[rtd-git-guide]: ../git/index.md
+[rtd-testing]: ../testing/testing.md
+[rtd-using-dev-env]: using.md
+[rtd-dev-remote]: remote.md
 [git-bash]: https://git-for-windows.github.io/
 [bash-admin-setup]: https://superuser.com/questions/1002262/run-applications-as-administrator-by-default-in-windows-10
-[set-up-git]: ../git/setup.html
+[set-up-git]: ../git/setup.md
 [ci]: ../git/cloning.html#step-3-configure-continuous-integration-for-your-fork

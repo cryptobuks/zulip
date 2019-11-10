@@ -1,28 +1,10 @@
-const ELECTRON_APP_VERSION = "2.3.82";
-const ELECTRON_APP_URL_LINUX = "https://github.com/zulip/zulip-electron/releases/download/v" + ELECTRON_APP_VERSION + "/Zulip-" + ELECTRON_APP_VERSION + "-x86_64.AppImage";
-const ELECTRON_APP_URL_MAC = "https://github.com/zulip/zulip-electron/releases/download/v" + ELECTRON_APP_VERSION + "/Zulip-" + ELECTRON_APP_VERSION + ".dmg";
-const ELECTRON_APP_URL_WINDOWS = "https://github.com/zulip/zulip-electron/releases/download/v" + ELECTRON_APP_VERSION + "/Zulip-Web-Setup-" + ELECTRON_APP_VERSION + ".exe";
+const ELECTRON_APP_VERSION = "4.0.0";
+const ELECTRON_APP_URL_LINUX = "https://github.com/zulip/zulip-desktop/releases/download/v" + ELECTRON_APP_VERSION + "/Zulip-" + ELECTRON_APP_VERSION + "-x86_64.AppImage";
+const ELECTRON_APP_URL_MAC = "https://github.com/zulip/zulip-desktop/releases/download/v" + ELECTRON_APP_VERSION + "/Zulip-" + ELECTRON_APP_VERSION + ".dmg";
+const ELECTRON_APP_URL_WINDOWS = "https://github.com/zulip/zulip-desktop/releases/download/v" + ELECTRON_APP_VERSION + "/Zulip-Web-Setup-" + ELECTRON_APP_VERSION + ".exe";
 
+import { detect_user_os } from './tabbed-instructions.js';
 import render_tabs from './team.js';
-import {detect_user_os}  from './tabbed-instructions.js';
-
-// this will either smooth scroll to an anchor where the `name`
-// is the same as the `scroll-to` reference, or to a px height
-// (as specified like `scroll-to='0px'`).
-var ScrollTo = function () {
-    $("[scroll-to]").click(function () {
-        var sel = $(this).attr("scroll-to");
-
-        // if the `scroll-to` is a parse-able pixel value like `50px`,
-        // then use that as the scrollTop, else assume it is a selector name
-        // and find the `offsetTop`.
-        var top = /\dpx/.test(sel) ?
-            parseInt(sel, 10) :
-            $("[name='" + sel + "']").offset().top;
-
-        $("body").animate({ scrollTop: top + "px" }, 300);
-    });
-};
 
 export function path_parts() {
     return window.location.pathname.split('/').filter(function (chunk) {
@@ -30,8 +12,8 @@ export function path_parts() {
     });
 }
 
-var hello_events = function () {
-    var counter = 0;
+const hello_events = function () {
+    let counter = 0;
     $(window).scroll(function () {
         if (counter % 2 === 0) {
             $(".screen.hero-screen .message-feed").css("transform", "translateY(-" + $(this).scrollTop() / 5 + "px)");
@@ -42,8 +24,8 @@ var hello_events = function () {
     $(".footer").addClass("hello");
 };
 
-var apps_events = function () {
-    var info = {
+const apps_events = function () {
+    const info = {
         windows: {
             image: "/static/images/landing-page/microsoft.png",
             alt: "Windows",
@@ -64,12 +46,14 @@ var apps_events = function () {
             image: "/static/images/app-screenshots/zulip-android.png",
             alt: "Android",
             description: "Zulip's native Android app makes it easy to keep up while on the go.",
+            show_instructions: false,
             link: "https://play.google.com/store/apps/details?id=com.zulipmobile",
         },
         ios: {
             image: "/static/images/app-screenshots/zulip-iphone-rough.png",
             alt: "iOS",
             description: "Zulip's native iOS app makes it easy to keep up while on the go.",
+            show_instructions: false,
             link: "https://itunes.apple.com/us/app/zulip/id1203036395",
         },
         linux: {
@@ -82,11 +66,11 @@ var apps_events = function () {
         },
     };
 
-    var version;
+    let version;
 
     function get_version_from_path() {
-        var result;
-        var parts = path_parts();
+        let result;
+        const parts = path_parts();
 
         Object.keys(info).forEach(function (version) {
             if (parts.indexOf(version) !== -1) {
@@ -103,15 +87,15 @@ var apps_events = function () {
     }
 
     function update_path() {
-        var next_path = get_path_from_version();
+        const next_path = get_path_from_version();
         history.pushState(version, '', next_path);
     }
 
-    var update_page = function () {
-        var $download_instructions = $(".download-instructions");
-        var $third_party_apps = $("#third-party-apps");
-        var $download_android_apk = $("#download-android-apk");
-        var version_info = info[version];
+    const update_page = function () {
+        const $download_instructions = $(".download-instructions");
+        const $third_party_apps = $("#third-party-apps");
+        const $download_android_apk = $("#download-android-apk");
+        const version_info = info[version];
 
         $(".info .platform").text(version_info.alt);
         $(".info .description").text(version_info.description);
@@ -133,7 +117,7 @@ var apps_events = function () {
     });
 
     $(".apps a .icon").click(function (e) {
-        var next_version = $(e.target).closest('a')
+        const next_version = $(e.target).closest('a')
             .attr('href')
             .replace('/apps/', '');
         version = next_version;
@@ -151,39 +135,16 @@ var apps_events = function () {
     update_page();
 };
 
-var events = function () {
-    ScrollTo();
-
-    $("a").click(function (e) {
-        // if a user is holding the CMD/CTRL key while clicking a link, they
-        // want to open the link in another browser tab which means that we
-        // should preserve the state of this one. Return out, and don't fade
-        // the page.
-        if (e.metaKey || e.ctrlKey) {
-            return;
-        }
-
-        // if the pathname is different than what we are already on, run the
-        // custom transition function.
-        if (window.location.pathname !== this.pathname && !this.hasAttribute("download") &&
-            !/no-action/.test(this.className)) {
-            e.preventDefault();
-
-            setTimeout(function () {
-                window.location.href = $(this).attr("href");
-            }.bind(this), 500);
-        }
-    });
-
+const events = function () {
     // get the location url like `zulipchat.com/features/`, cut off the trailing
     // `/` and then split by `/` to get ["zulipchat.com", "features"], then
     // pop the last element to get the current section (eg. `features`).
-    var location = window.location.pathname.replace(/\/#*$/, "").split(/\//).pop();
+    const location = window.location.pathname.replace(/\/#*$/, "").split(/\//).pop();
 
     $("[data-on-page='" + location + "']").addClass("active");
 
     $("body").click(function (e) {
-        var $e = $(e.target);
+        const $e = $(e.target);
 
         if ($e.is("nav ul .exit")) {
             $("nav ul").removeClass("show");
@@ -210,7 +171,7 @@ var events = function () {
 
 
 // run this callback when the page is determined to have loaded.
-var load = function () {
+const load = function () {
 
     // Initiate the bootstrap carousel logic
     $('.carousel').carousel({
@@ -219,30 +180,26 @@ var load = function () {
 
     // Move to the next slide on clicking inside the carousel container
     $(".carousel-inner .item-container").click(function (e) {
-        var get_tag_name = e.target.tagName.toLowerCase();
-        var is_button = get_tag_name === "button";
-        var is_link = get_tag_name === "a";
-        var is_last_slide = $("#tour-carousel .carousel-inner .item:last-child").hasClass("active");
+        const get_tag_name = e.target.tagName.toLowerCase();
+        const is_button = get_tag_name === "button";
+        const is_link = get_tag_name === "a";
+        const is_last_slide = $("#tour-carousel .carousel-inner .item:last-child").hasClass("active");
 
         // Do not trigger this event if user clicks on a button, link
         // or if it's the last slide
-        var move_slide_forward = !is_button && !is_link && !is_last_slide;
+        const move_slide_forward = !is_button && !is_link && !is_last_slide;
 
         if (move_slide_forward) {
             $(this).closest('.carousel').carousel('next');
         }
     });
 
-    $(".carousel-link-button").click(function () {
-        window.location.href = $(this).attr("href");
-    });
-
     $('.carousel').on('slid', function () {
-        var $this = $(this);
+        const $this = $(this);
         $this.find('.visibility-control').show();
-        if ($this.find('.carousel-inner .item:first').hasClass('active')) {
+        if ($this.find('.carousel-inner .item').first().hasClass('active')) {
             $this.find('.left.visibility-control').hide();
-        } else if ($this.find('.carousel-inner .item:last').hasClass('active')) {
+        } else if ($this.find('.carousel-inner .item').last().hasClass('active')) {
             $this.find('.right.visibility-control').hide();
         }
     });

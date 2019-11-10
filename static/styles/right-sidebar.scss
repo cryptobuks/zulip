@@ -19,25 +19,48 @@
     overflow: auto;
 }
 
-#user_presences {
-    max-width: 95%;
-    overflow-x: hidden;
-}
-
 #user_presences,
 #group-pms {
     list-style-position: inside; /* Draw the bullets inside our box */
 }
 
-#user_presences:hover,
-#group-pms:hover {
-    overflow-y: auto;
-}
+#user_presences {
+    max-width: 95%;
+    overflow-x: hidden;
 
-#user_presences li {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    li {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+
+        .user-list-arrow {
+            position: absolute;
+            top: 0px;
+            right: 10px;
+            font-size: 0.8em;
+            display: none;
+
+            i {
+                padding-right: 0.25em;
+                display: inline-block;
+                width: 13px;
+            }
+
+            &:hover {
+                display: inline;
+                cursor: pointer;
+                color: hsl(0, 0%, 0%);
+            }
+        }
+
+        &:hover {
+            .user-list-arrow {
+                display: inline;
+                cursor: pointer;
+                color: hsl(0, 0%, 53%);
+            }
+        }
+    }
 }
 
 #user_presences li,
@@ -48,33 +71,6 @@
     margin: 1px 0px;
     padding-right: 15px;
 }
-
-#user_presences .user-list-arrow {
-    position: absolute;
-    top: 0px;
-    right: 10px;
-    font-size: 0.8em;
-    display: none;
-}
-
-.user-list-arrow i {
-    padding-right: 0.25em;
-    display: inline-block;
-    width: 13px;
-}
-
-#user_presences li:hover .user-list-arrow {
-    display: inline;
-    cursor: pointer;
-    color: hsl(0, 0%, 53%);
-}
-
-#user_presences li .user-list-arrow:hover {
-    display: inline;
-    cursor: pointer;
-    color: hsl(0, 0%, 0%);
-}
-
 
 #group-pm-title {
     margin: 10px 0px 0px 0px;
@@ -89,10 +85,6 @@
     margin-bottom: 0px;
     margin-left: 5px;
     margin-right: 5px;
-}
-
-#user_presences .user_circle,
-#group-pms .user_circle_fraction {
     display: block;
 }
 
@@ -104,7 +96,8 @@
 
 #invite-user-link i {
     text-decoration: none;
-    margin-right: 5px;
+    margin-right: 3px;
+    margin-left: 5px;
 }
 
 .group-pms-sidebar-entry .selectable_sidebar_block {
@@ -218,14 +211,20 @@
 
 #userlist-header {
     cursor: pointer;
-}
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
 
-#user_filter_icon {
-    float: right;
-    font-size: 13px;
-    opacity: 0.50;
-    margin-top: 3px;
-    margin-right: 10px;
+    #userlist-title {
+        margin: 0;
+    }
+
+    #user_filter_icon {
+        font-size: 13px;
+        opacity: 0.50;
+        margin-right: 5px;
+    }
 }
 
 #feedback_section {
@@ -244,4 +243,39 @@
 
 #sidebar-keyboard-shortcuts {
     color: inherit;
+}
+
+/* This max-width must be synced with message_viewport.is_narrow */
+@media (max-width: 1165px) {
+    #sidebar-keyboard-shortcuts {
+        /* This is supposed to fix this appearing improperly in narrow
+        windows.  It's likely the wrong solution; a proper fix likely
+        involves replacing `position: fixed` in #keyboard-icon so that
+        it still appears in the right sidebar overlay. */
+        display: none;
+    }
+
+    #userlist-toggle {
+        display: block;
+    }
+}
+
+@media (max-width: 775px) {
+    #user_search_section .user-list-filter {
+        /* input should be 100% - 6px padding x2 - 1px border x2. */
+        width: calc(100% - 12px - 2px);
+    }
+}
+
+@media (max-width: 500px) {
+    #userlist-toggle {
+        height: 30px;
+        line-height: 30px;
+    }
+
+    #userlist-toggle-button {
+        height: 30px;
+        padding-top: 0px;
+        padding-bottom: 0px;
+    }
 }

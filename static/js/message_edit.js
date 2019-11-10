@@ -1,5 +1,7 @@
-var message_edit = (function () {
-var exports = {};
+var render_message_edit_form = require('../templates/message_edit_form.hbs');
+var render_message_edit_history = require('../templates/message_edit_history.hbs');
+var render_topic_edit_form = require('../templates/topic_edit_form.hbs');
+
 var currently_editing_messages = {};
 var currently_deleting_messages = [];
 
@@ -153,7 +155,7 @@ exports.save = function (row, from_topic_edited_only) {
             echo.edit_locally(message, new_content, topic_changed ? new_topic : undefined);
             row = current_msg_list.get_row(message_id);
         }
-        message_edit.end(row);
+        exports.end(row);
         return;
     }
 
@@ -173,7 +175,7 @@ exports.save = function (row, from_topic_edited_only) {
     }
     if (!changed) {
         // If they didn't change anything, just cancel it.
-        message_edit.end(row);
+        exports.end(row);
         return;
     }
     channel.patch({
@@ -217,11 +219,21 @@ function handle_edit_keydown(from_topic_edited_only, e) {
         // Pressing enter to save edits is coupled with enter to send
         if (composebox_typeahead.should_enter_send(e)) {
             row = $(".message_edit_content").filter(":focus").closest(".message_row");
+            var message_edit_save_button = row.find(".message_edit_save");
+            if (message_edit_save_button.attr('disabled') === "disabled") {
+                // In cases when the save button is disabled
+                // we need to disable save on pressing enter
+                // Prevent default to avoid new-line on pressing
+                // enter inside the textarea in this case
+                e.preventDefault();
+                return;
+            }
         } else {
             composebox_typeahead.handle_enter($(e.target), e);
             return;
         }
-    } else if (e.target.id === "message_edit_topic" && code === 13) {
+    } else if (code === 13 && ($(e.target).hasClass("message_edit_topic") ||
+                               $(e.target).hasClass("message_edit_topic_propagate"))) {
         row = $(e.target).closest(".message_row");
     } else if (e.target.id === "inline_topic_edit" && code === 13) {
         row = $(e.target).closest(".recipient_row");
@@ -231,7 +243,7 @@ function handle_edit_keydown(from_topic_edited_only, e) {
     }
     e.stopPropagation();
     e.preventDefault();
-    message_edit.save(row, from_topic_edited_only);
+    exports.save(row, from_topic_edited_only);
 }
 
 function timer_text(seconds_left) {
@@ -263,19 +275,26 @@ function edit_message(row, raw_content) {
     // zerver.views.messages.update_message_backend
     var seconds_left_buffer = 5;
     var editability = get_editability(message, seconds_left_buffer);
-    var is_editable = editability === message_edit.editability_types.TOPIC_ONLY ||
-                       editability === message_edit.editability_types.FULL;
+    var is_editable = editability === exports.editability_types.TOPIC_ONLY ||
+                       editability === exports.editability_types.FULL;
+    var max_file_upload_size = page_params.max_file_upload_size;
+    var file_upload_enabled = false;
 
-    var form = $(templates.render(
-        'message_edit_form',
-        {is_stream: message.type === 'stream',
-         message_id: message.id,
-         is_editable: is_editable,
-         is_content_editable: editability === message_edit.editability_types.FULL,
-         has_been_editable: editability !== editability_types.NO,
-         topic: util.get_message_topic(message),
-         content: raw_content,
-         minutes_to_edit: Math.floor(page_params.realm_message_content_edit_limit_seconds / 60)}));
+    if (max_file_upload_size > 0) {
+        file_upload_enabled = true;
+    }
+
+    var form = $(render_message_edit_form({
+        is_stream: message.type === 'stream',
+        message_id: message.id,
+        is_editable: is_editable,
+        is_content_editable: editability === exports.editability_types.FULL,
+        has_been_editable: editability !== editability_types.NO,
+        topic: util.get_message_topic(message),
+        content: raw_content,
+        file_upload_enabled: file_upload_enabled,
+        minutes_to_edit: Math.floor(page_params.realm_message_content_edit_limit_seconds / 60),
+    }));
 
     var edit_obj = {form: form, raw_content: raw_content};
     currently_editing_messages[message.id] = edit_obj;
@@ -356,7 +375,7 @@ function edit_message(row, raw_content) {
         // Do this right away, rather than waiting for the timer to do its first update,
         // since otherwise there is a noticeable lag
         message_edit_countdown_timer.text(timer_text(seconds_left));
-        var countdown_timer = setInterval(function () {
+        const countdown_timer = setInterval(function () {
             seconds_left -= 1;
             if (seconds_left <= 0) {
                 clearInterval(countdown_timer);
@@ -383,7 +402,7 @@ function edit_message(row, raw_content) {
         message_edit_topic.val('');
         message_edit_topic.focus();
     } else if (editability === editability_types.TOPIC_ONLY) {
-        row.find(".message_edit_cancel").focus();
+        row.find(".message_edit_topic").focus();
     } else {
         message_edit_content.focus();
         // Put cursor at end of input.
@@ -392,10 +411,11 @@ function edit_message(row, raw_content) {
         message_edit_content.val(contents);
     }
 
-    // Scroll to keep the message content in the same place
+    // Scroll to keep the top of the message content text in the same
+    // place visually, adjusting for border and padding.
     var edit_top = message_edit_content[0].getBoundingClientRect().top;
-    /* adjust for border and padding and 1 line height*/
     var scroll_by = edit_top - content_top + 5 - 14;
+
     edit_obj.scrolled_by = scroll_by;
     message_viewport.scrollTop(message_viewport.scrollTop() + scroll_by);
 
@@ -457,7 +477,7 @@ exports.start = function (row, edit_box_open_callback) {
 };
 
 exports.start_topic_edit = function (recipient_row) {
-    var form = $(templates.render('topic_edit_form'));
+    var form = $(render_topic_edit_form());
     current_msg_list.show_edit_topic(recipient_row, form);
     form.keydown(_.partial(handle_edit_keydown, true));
     var msg_id = rows.id_for_recipient_row(recipient_row);
@@ -538,7 +558,7 @@ exports.edit_last_sent_message = function () {
 
     // Finally do the real work!
     compose_actions.cancel();
-    message_edit.start(msg_row, function () {
+    exports.start(msg_row, function () {
         $('#message_edit_content').focus();
     });
 };
@@ -591,7 +611,7 @@ exports.show_history = function (message) {
                 content_edit_history.push(item);
             });
 
-            $('#message-history').html(templates.render('message_edit_history', {
+            $('#message-history').html(render_message_edit_history({
                 edited_messages: content_edit_history,
             }));
         },
@@ -671,10 +691,4 @@ exports.handle_narrow_deactivated = function () {
     });
 };
 
-return exports;
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = message_edit;
-}
-window.message_edit = message_edit;
+window.message_edit = exports;

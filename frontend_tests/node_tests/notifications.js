@@ -12,6 +12,10 @@ set_global('page_params', {
     is_admin: false,
     realm_users: [],
 });
+const _navigator = {
+    userAgent: 'Mozilla/5.0 AppleWebKit/537.36 Chrome/64.0.3282.167 Safari/537.36',
+};
+set_global('navigator', _navigator);
 
 zrequire('muting');
 zrequire('stream_data');
@@ -22,19 +26,19 @@ zrequire('util');
 zrequire('notifications');
 
 // Not muted streams
-var general = {
+const general = {
     subscribed: true,
     name: 'general',
     stream_id: 10,
-    in_home_view: true,
+    is_muted: false,
 };
 
 // Muted streams
-var muted = {
+const muted = {
     subscribed: true,
     name: 'muted',
     stream_id: 20,
-    in_home_view: false,
+    is_muted: true,
 };
 
 stream_data.add_sub('general', general);
@@ -156,14 +160,14 @@ run_test('message_is_notifiable', () => {
 
 run_test('basic_notifications', () => {
 
-    var n; // Object for storing all notification data for assertions.
-    var last_closed_message_id = null;
-    var last_shown_message_id = null;
+    let n; // Object for storing all notification data for assertions.
+    let last_closed_message_id = null;
+    let last_shown_message_id = null;
 
     // Notifications API stub
     notifications.set_notification_api({
         createNotification: function createNotification(icon, title, content, tag) {
-            var notification_object = {icon: icon, body: content, tag: tag};
+            const notification_object = {icon: icon, body: content, tag: tag};
             // properties for testing.
             notification_object.tests = {
                 shown: false,
@@ -179,7 +183,7 @@ run_test('basic_notifications', () => {
         },
     });
 
-    var message_1 = {
+    const message_1 = {
         id: 1000,
         content: '@-mentions the user',
         avatar_url: 'url',
@@ -193,7 +197,7 @@ run_test('basic_notifications', () => {
         topic: 'whatever',
     };
 
-    var message_2 = {
+    const message_2 = {
         id: 1500,
         avatar_url: 'url',
         content: '@-mentions the user',
@@ -208,7 +212,7 @@ run_test('basic_notifications', () => {
     };
 
     // Send notification.
-    notifications.process_notification({message: message_1, webkit_notify: true});
+    notifications.process_notification({message: message_1, desktop_notify: true});
     n = notifications.get_notifications();
     assert.equal('Jesse Pinkman to general > whatever' in n, true);
     assert.equal(Object.keys(n).length, 1);
@@ -223,7 +227,7 @@ run_test('basic_notifications', () => {
 
     // Send notification.
     message_1.id = 1001;
-    notifications.process_notification({message: message_1, webkit_notify: true});
+    notifications.process_notification({message: message_1, desktop_notify: true});
     n = notifications.get_notifications();
     assert.equal('Jesse Pinkman to general > whatever' in n, true);
     assert.equal(Object.keys(n).length, 1);
@@ -231,14 +235,14 @@ run_test('basic_notifications', () => {
 
     // Process same message again. Notification count shouldn't increase.
     message_1.id = 1002;
-    notifications.process_notification({message: message_1, webkit_notify: true});
+    notifications.process_notification({message: message_1, desktop_notify: true});
     n = notifications.get_notifications();
     assert.equal('Jesse Pinkman to general > whatever' in n, true);
     assert.equal(Object.keys(n).length, 1);
     assert.equal(last_shown_message_id, message_1.id);
 
     // Send another message. Notification count should increase.
-    notifications.process_notification({message: message_2, webkit_notify: true});
+    notifications.process_notification({message: message_2, desktop_notify: true});
     n = notifications.get_notifications();
     assert.equal('Gus Fring to general > lunch' in n, true);
     assert.equal('Jesse Pinkman to general > whatever' in n, true);

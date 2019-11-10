@@ -1,23 +1,23 @@
+from urllib.parse import urljoin
 
 from typing import Any, Dict, Optional
 from django.http import HttpRequest
 from django.conf import settings
-from django.urls import reverse
 
 from zerver.models import UserProfile, get_realm, Realm
 from zproject.backends import (
-    any_oauth_backend_enabled,
+    any_social_backend_enabled,
+    get_social_backend_dicts,
     password_auth_enabled,
     require_email_format_usernames,
     auth_enabled_helper,
     AUTH_BACKEND_NAME_MAP,
-    SOCIAL_AUTH_BACKENDS,
 )
 from zerver.decorator import get_client_name
 from zerver.lib.send_email import FromAddress
 from zerver.lib.subdomains import get_subdomain
 from zerver.lib.realm_icon import get_realm_icon_url
-from zerver.lib.realm_description import get_realm_rendered_description
+from zerver.lib.realm_description import get_realm_rendered_description, get_realm_text_description
 
 from version import ZULIP_VERSION, LATEST_RELEASE_VERSION, LATEST_MAJOR_VERSION, \
     LATEST_RELEASE_ANNOUNCEMENT
@@ -44,7 +44,10 @@ def get_realm_from_request(request: HttpRequest) -> Optional[Realm]:
         # need to do duplicate queries on the same realm while
         # processing a single request.
         subdomain = get_subdomain(request)
-        request.realm = get_realm(subdomain)
+        try:
+            request.realm = get_realm(subdomain)
+        except Realm.DoesNotExist:
+            request.realm = None
     return request.realm
 
 def zulip_default_context(request: HttpRequest) -> Dict[str, Any]:
@@ -133,6 +136,10 @@ def zulip_default_context(request: HttpRequest) -> Dict[str, Any]:
         'allow_search_engine_indexing': allow_search_engine_indexing,
     }
 
+    context['OPEN_GRAPH_URL'] = '%s%s' % (realm_uri, request.path)
+    if realm is not None and realm.icon_source == realm.ICON_UPLOADED:
+        context['OPEN_GRAPH_IMAGE'] = urljoin(realm_uri, realm_icon)
+
     return context
 
 def login_context(request: HttpRequest) -> Dict[str, Any]:
@@ -150,13 +157,16 @@ def login_context(request: HttpRequest) -> Dict[str, Any]:
         'realm_description': realm_description,
         'require_email_format_usernames': require_email_format_usernames(realm),
         'password_auth_enabled': password_auth_enabled(realm),
-        'any_oauth_backend_enabled': any_oauth_backend_enabled(realm),
+        'any_social_backend_enabled': any_social_backend_enabled(realm),
         'two_factor_authentication_enabled': settings.TWO_FACTOR_AUTHENTICATION_ENABLED,
     }  # type: Dict[str, Any]
 
+    if realm is not None and realm.description:
+        context['OPEN_GRAPH_TITLE'] = realm.name
+        context['OPEN_GRAPH_DESCRIPTION'] = get_realm_text_description(realm)
+
     # Add the keys for our standard authentication backends.
     no_auth_enabled = True
-    social_backends = []
     for auth_backend_name in AUTH_BACKEND_NAME_MAP:
         name_lower = auth_backend_name.lower()
         key = "%s_auth_enabled" % (name_lower,)
@@ -165,19 +175,7 @@ def login_context(request: HttpRequest) -> Dict[str, Any]:
         if is_enabled:
             no_auth_enabled = False
 
-        # Now add the enabled social backends to the social_backends
-        # list used to generate buttons for login/register pages.
-        backend = AUTH_BACKEND_NAME_MAP[auth_backend_name]
-        if not is_enabled or backend not in SOCIAL_AUTH_BACKENDS:
-            continue
-        social_backends.append({
-            'name': backend.name,
-            'display_name': backend.auth_backend_name,
-            'login_url': reverse('login-social', args=(backend.name,)),
-            'signup_url': reverse('signup-social', args=(backend.name,)),
-            'sort_order': backend.sort_order,
-        })
-    context['social_backends'] = sorted(social_backends, key=lambda x: x['sort_order'], reverse=True)
+    context['external_authentication_methods'] = get_social_backend_dicts(realm)
     context['no_auth_enabled'] = no_auth_enabled
 
     return context

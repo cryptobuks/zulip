@@ -1,4 +1,3 @@
-
 from collections import defaultdict
 import logging
 import random
@@ -48,12 +47,32 @@ class SimpleQueueClient:
         self._connect()
 
     def _get_parameters(self) -> pika.ConnectionParameters:
-        # We explicitly disable the RabbitMQ heartbeat feature, since
-        # it doesn't make sense with BlockingConnection
         credentials = pika.PlainCredentials(settings.RABBITMQ_USERNAME,
                                             settings.RABBITMQ_PASSWORD)
+
+        # With BlockingConnection, we are passed
+        # self.rabbitmq_heartbeat=0, which asks to explicitly disable
+        # the RabbitMQ heartbeat feature.  This is correct since that
+        # heartbeat doesn't make sense with BlockingConnection (we do
+        # need it for TornadoConnection).
+        #
+        # Where we've disabled RabbitMQ's heartbeat, the only
+        # keepalive on this connection is the TCP keepalive (defaults:
+        # `/proc/sys/net/ipv4/tcp_keepalive_*`).  On most Linux
+        # systems, the default is to start sending keepalive packets
+        # after TCP_KEEPIDLE (7200 seconds) of inactivity; after that
+        # point, it send them every TCP_KEEPINTVL (typically 75s).
+        # Some Kubernetes / Docker Swarm networks can kill "idle" TCP
+        # connections after as little as ~15 minutes of inactivity.
+        # To avoid this killing our RabbitMQ connections, we set
+        # TCP_KEEPIDLE to something significantly below 15 minutes.
+        tcp_options = None
+        if self.rabbitmq_heartbeat == 0:
+            tcp_options = dict(TCP_KEEPIDLE=60 * 5)
+
         return pika.ConnectionParameters(settings.RABBITMQ_HOST,
-                                         heartbeat_interval=self.rabbitmq_heartbeat,
+                                         heartbeat=self.rabbitmq_heartbeat,
+                                         tcp_options=tcp_options,
                                          credentials=credentials)
 
     def _generate_ctag(self, queue_name: str) -> str:
@@ -61,8 +80,8 @@ class SimpleQueueClient:
 
     def _reconnect_consumer_callback(self, queue: str, consumer: Consumer) -> None:
         self.log.info("Queue reconnecting saved consumer %s to queue %s" % (consumer, queue))
-        self.ensure_queue(queue, lambda: self.channel.basic_consume(consumer,
-                                                                    queue=queue,
+        self.ensure_queue(queue, lambda: self.channel.basic_consume(queue,
+                                                                    consumer,
                                                                     consumer_tag=self._generate_ctag(queue)))
 
     def _reconnect_consumer_callbacks(self) -> None:
@@ -125,7 +144,7 @@ class SimpleQueueClient:
 
         self.consumers[queue_name].add(wrapped_consumer)
         self.ensure_queue(queue_name,
-                          lambda: self.channel.basic_consume(wrapped_consumer, queue=queue_name,
+                          lambda: self.channel.basic_consume(queue_name, wrapped_consumer,
                                                              consumer_tag=self._generate_ctag(queue_name)))
 
     def register_json_consumer(self, queue_name: str,
@@ -283,7 +302,7 @@ class TornadoQueueClient(SimpleQueueClient):
 
         self.consumers[queue_name].add(wrapped_consumer)
         self.ensure_queue(queue_name,
-                          lambda: self.channel.basic_consume(wrapped_consumer, queue=queue_name,
+                          lambda: self.channel.basic_consume(queue_name, wrapped_consumer,
                                                              consumer_tag=self._generate_ctag(queue_name)))
 
 queue_client = None  # type: Optional[SimpleQueueClient]
@@ -305,7 +324,7 @@ def get_queue_client() -> SimpleQueueClient:
 queue_lock = threading.RLock()
 
 def queue_json_publish(queue_name: str,
-                       event: Union[Dict[str, Any], str],
+                       event: Dict[str, Any],
                        processor: Callable[[Any], None]=None) -> None:
     # most events are dicts, but zerver.middleware.write_log_line uses a str
     with queue_lock:

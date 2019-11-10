@@ -2,7 +2,7 @@ zrequire('util');
 zrequire('unread');
 zrequire('stream_data');
 zrequire('people');
-zrequire('Handlebars', 'handlebars');
+set_global('Handlebars', global.make_handlebars());
 zrequire('Filter', 'js/filter');
 
 set_global('message_store', {});
@@ -68,6 +68,10 @@ run_test('basics', () => {
     assert(!filter.has_operand('stream', 'nada'));
 
     assert(!filter.is_search());
+    assert(filter.can_mark_messages_read());
+    assert(!filter.contains_only_private_messages());
+    assert(filter.allow_use_first_unread_when_narrowing());
+    assert(filter.includes_full_stream_history());
     assert(filter.can_apply_locally());
 
     operators = [
@@ -78,6 +82,9 @@ run_test('basics', () => {
     filter = new Filter(operators);
 
     assert(filter.is_search());
+    assert(!filter.can_mark_messages_read());
+    assert(!filter.contains_only_private_messages());
+    assert(!filter.allow_use_first_unread_when_narrowing());
     assert(!filter.can_apply_locally());
     assert(!filter.is_exactly('stream'));
 
@@ -88,6 +95,7 @@ run_test('basics', () => {
         {operator: 'stream', operand: 'exclude', negated: true},
     ];
     filter = new Filter(operators);
+    assert(!filter.contains_only_private_messages());
     assert(!filter.has_operator('stream'));
 
     // Negated searches are just like positive searches for our purposes, since
@@ -97,6 +105,7 @@ run_test('basics', () => {
         {operator: 'search', operand: 'stop_word', negated: true},
     ];
     filter = new Filter(operators);
+    assert(!filter.contains_only_private_messages());
     assert(filter.has_operator('search'));
     assert(!filter.can_apply_locally());
 
@@ -107,8 +116,77 @@ run_test('basics', () => {
     filter = new Filter(operators);
     assert(filter.has_operator('has'));
     assert(!filter.can_apply_locally());
-});
+    assert(!filter.includes_full_stream_history());
 
+    operators = [
+        {operator: 'streams', operand: 'public', negated: true},
+    ];
+    filter = new Filter(operators);
+    assert(!filter.contains_only_private_messages());
+    assert(!filter.has_operator('streams'));
+    assert(filter.has_negated_operand('streams', 'public'));
+    assert(!filter.can_apply_locally());
+
+    operators = [
+        {operator: 'streams', operand: 'public'},
+    ];
+    filter = new Filter(operators);
+    assert(!filter.contains_only_private_messages());
+    assert(filter.has_operator('streams'));
+    assert(!filter.has_negated_operand('streams', 'public'));
+    assert(!filter.can_apply_locally());
+    assert(filter.includes_full_stream_history());
+
+    operators = [
+        {operator: 'is', operand: 'private'},
+    ];
+    filter = new Filter(operators);
+    assert(filter.contains_only_private_messages());
+    assert(!filter.has_operator('search'));
+    assert(filter.can_apply_locally());
+
+    operators = [
+        {operator: 'pm-with', operand: 'joe@example.com'},
+    ];
+    filter = new Filter(operators);
+    assert(filter.contains_only_private_messages());
+    assert(!filter.has_operator('search'));
+    assert(filter.can_apply_locally());
+
+    operators = [
+        {operator: 'group-pm-with', operand: 'joe@example.com'},
+    ];
+    filter = new Filter(operators);
+    assert(filter.contains_only_private_messages());
+    assert(!filter.has_operator('search'));
+    assert(filter.can_apply_locally());
+});
+run_test('show_first_unread', () => {
+    var operators = [
+        {operator: 'is', operand: 'any'},
+    ];
+    var filter = new Filter(operators);
+    assert(filter.allow_use_first_unread_when_narrowing());
+
+    operators = [
+        {operator: 'search', operand: 'query to search'},
+    ];
+    filter = new Filter(operators);
+    assert(!filter.allow_use_first_unread_when_narrowing());
+
+    filter = new Filter();
+    filter.can_mark_messages_read = () => true;
+    assert(filter.allow_use_first_unread_when_narrowing());
+
+    // Side case
+    operators = [
+        {operator: 'is', operand: 'any'},
+    ];
+    filter = new Filter(operators);
+    filter.can_mark_messages_read = () => false;
+    assert(filter.allow_use_first_unread_when_narrowing());
+
+});
 run_test('topic_stuff', () => {
     var operators = [
         {operator: 'stream', operand: 'foo'},
@@ -255,6 +333,9 @@ run_test('predicate_basics', () => {
     assert(predicate({type: 'private'}));
     assert(!predicate({type: 'stream'}));
 
+    predicate = get_predicate([['streams', 'public']]);
+    assert(predicate({}));
+
     predicate = get_predicate([['is', 'starred']]);
     assert(predicate({starred: true}));
     assert(!predicate({starred: false}));
@@ -366,6 +447,13 @@ run_test('negated_predicates', () => {
     predicate = new Filter(narrow).predicate();
     assert(predicate({type: 'stream', stream_id: 999999}));
     assert(!predicate({type: 'stream', stream_id: social_stream_id}));
+
+    narrow = [
+        {operator: 'streams', operand: 'public', negated: true},
+    ];
+    predicate = new Filter(narrow).predicate();
+    assert(predicate({}));
+
 });
 
 run_test('mit_exceptions', () => {
@@ -505,6 +593,25 @@ run_test('parse', () => {
     ];
     _test();
 
+    string = 'text streams:public more text';
+    operators = [
+        {operator: 'streams', operand: 'public'},
+        {operator: 'search', operand: 'text more text'},
+    ];
+    _test();
+
+    string = 'streams:public';
+    operators = [
+        {operator: 'streams', operand: 'public'},
+    ];
+    _test();
+
+    string = '-streams:public';
+    operators = [
+        {operator: 'streams', operand: 'public', negated: true},
+    ];
+    _test();
+
     string = 'stream:foo :emoji: are cool';
     operators = [
         {operator: 'stream', operand: 'foo'},
@@ -551,6 +658,26 @@ run_test('unparse', () => {
     assert.deepEqual(Filter.unparse(operators), string);
 
     operators = [
+        {operator: 'streams', operand: 'public'},
+        {operator: 'search', operand: 'text'},
+    ];
+
+    string = 'streams:public text';
+    assert.deepEqual(Filter.unparse(operators), string);
+
+    operators = [
+        {operator: 'streams', operand: 'public'},
+    ];
+    string = 'streams:public';
+    assert.deepEqual(Filter.unparse(operators), string);
+
+    operators = [
+        {operator: 'streams', operand: 'public', negated: true},
+    ];
+    string = '-streams:public';
+    assert.deepEqual(Filter.unparse(operators), string);
+
+    operators = [
         {operator: 'id', operand: 50},
     ];
     string = 'id:50';
@@ -572,6 +699,18 @@ run_test('unparse', () => {
 run_test('describe', () => {
     var narrow;
     var string;
+
+    narrow = [
+        {operator: 'streams', operand: 'public'},
+    ];
+    string = 'streams public';
+    assert.equal(Filter.describe(narrow), string);
+
+    narrow = [
+        {operator: 'streams', operand: 'public', negated: true},
+    ];
+    string = 'exclude streams public';
+    assert.equal(Filter.describe(narrow), string);
 
     narrow = [
         {operator: 'stream', operand: 'devel'},
@@ -786,6 +925,7 @@ run_test('term_type', () => {
         };
     }
 
+    assert_term_type(term('streams', 'public'), 'streams');
     assert_term_type(term('stream', 'whatever'), 'stream');
     assert_term_type(term('pm-with', 'whomever'), 'pm-with');
     assert_term_type(term('pm-with', 'whomever', true), 'not-pm-with');

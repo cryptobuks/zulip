@@ -1,4 +1,3 @@
-
 from typing import List, Tuple, Match
 import re
 
@@ -39,6 +38,8 @@ IGNORED_PHRASES = [
     r"OTP",
     r"Pivotal",
     r"Play Store",
+    r"PM",
+    r"PMs",
     r'REMOTE_USER',
     r'Slack',
     r"SSO",
@@ -57,6 +58,7 @@ IGNORED_PHRASES = [
     r"Zulip",
     r"Zulip Account Security",
     r"Zulip Security",
+    r"Zulip Standard",
     r"Zulip Team",
     r"iPhone",
     r"iOS",
@@ -118,8 +120,9 @@ IGNORED_PHRASES = [
     r"in 3 hours",
     # We should probably just delete this string from translations
     r'activation key',
-    # this is used as a topic
-    r'^hello$',
+    # these are used as topics
+    r'^new streams$',
+    r'^stream events$',
     # These are used as example short names (e.g. an uncapitalized context):
     r"^marketing$",
     r"^cookie$",

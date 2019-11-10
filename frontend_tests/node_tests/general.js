@@ -32,7 +32,7 @@ assert(people.is_known_user_id(isaac.user_id));
 // Let's create the current user, which some future tests will
 // require.
 
-var me = {
+const me = {
     email: 'me@example.com',
     user_id: 31,
     full_name: 'Me Myself',
@@ -54,7 +54,15 @@ const denmark_stream = {
 // We often use IIFEs (immediately invoked function expressions)
 // to make our tests more self-containted.
 
+// Some quick housekeeping:  Let's clear page_params, which is a data
+// structure that the server sends down to us when the app starts.  We
+// prefer to test with a clean slate.
+
+set_global('page_params', {});
+
 zrequire('stream_data');
+set_global('i18n', global.stub_i18n);
+zrequire('settings_display');
 
 run_test('stream_data', () => {
     assert.equal(stream_data.get_sub_by_name('Denmark'), undefined);
@@ -103,7 +111,7 @@ zrequire('message_store');
 run_test('message_store', () => {
     // Our test runner automatically sets _ for us.
     // See http://underscorejs.org/ for help on that library.
-    var in_message = _.clone(messages.isaac_to_denmark_stream);
+    const in_message = _.clone(messages.isaac_to_denmark_stream);
 
     assert.equal(in_message.alerted, undefined);
     message_store.set_message_booleans(in_message);
@@ -130,7 +138,7 @@ run_test('unread', () => {
 
     assert.equal(unread.num_unread_for_topic(stream_id, topic_name), 0);
 
-    var in_message = _.clone(messages.isaac_to_denmark_stream);
+    const in_message = _.clone(messages.isaac_to_denmark_stream);
     message_store.set_message_booleans(in_message);
 
     unread.process_loaded_messages([in_message]);
@@ -141,13 +149,6 @@ run_test('unread', () => {
 // sender, by PM recipient, by search keywords, etc.  We will discuss
 // narrows more broadly, but first let's test out a core piece of
 // code that makes things work.
-
-
-// Some quick housekeeping:  Let's clear page_params, which is a data
-// structure that the server sends down to us when the app starts.  We
-// prefer to test with a clean slate.
-
-set_global('page_params', {});
 
 // We use the second argument of zrequire to find the location of the
 // Filter class.
@@ -371,7 +372,7 @@ run_test('update_user_event', () => {
 */
 
 function test_helper() {
-    var events = [];
+    const events = [];
 
     return {
         redirect: (module_name, func_name) => {
@@ -526,8 +527,11 @@ run_test('unread_ops', () => {
         // Make us not be in a narrow (somewhat hackily).
         message_list.narrowed = undefined;
 
+        // Set current_message_list containing messages that
+        // can be marked read
         set_global('current_msg_list', {
             all_messages: () => test_messages,
+            can_mark_messages_read: () => true,
         });
 
         // Ignore these interactions for now:
@@ -538,11 +542,17 @@ run_test('unread_ops', () => {
     }());
 
     // Set up a way to capture the options passed in to channel.post.
-    var channel_post_opts;
+    let channel_post_opts;
     channel.post = (opts) => {
         channel_post_opts = opts;
     };
 
+    // First, test for a message list that cannot read messages
+    current_msg_list.can_mark_messages_read = () => false;
+    unread_ops.process_visible();
+    assert.deepEqual(channel_post_opts, undefined);
+
+    current_msg_list.can_mark_messages_read = () => true;
     // Do the main thing we're testing!
     unread_ops.process_visible();
 
@@ -555,6 +565,7 @@ run_test('unread_ops', () => {
         data: { messages: '[50]', op: 'add', flag: 'read' },
         success: channel_post_opts.success,
     });
+
 });
 
 /*
@@ -600,7 +611,7 @@ function jquery_elem() {
     // We create basic stubs for jQuery elements, so they
     // just work.  We can extend these in cases where we want
     // more detailed testing.
-    var elem = {};
+    const elem = {};
 
     elem.expectOne = () => elem;
     elem.removeClass = () => elem;
@@ -615,7 +626,7 @@ function make_jquery_helper() {
 
     const stream_filters = jquery_elem();
 
-    var appended_data;
+    let appended_data;
     stream_filters.append = function (data) {
         appended_data = data;
     };
@@ -657,12 +668,12 @@ function make_topic_list_helper() {
     topic_list.active_stream_id = () => undefined;
     topic_list.get_stream_li = () => undefined;
 
-    var topic_list_closed;
+    let topic_list_closed;
     topic_list.close = () => {
         topic_list_closed = true;
     };
 
-    var topic_list_rebuilt;
+    let topic_list_rebuilt;
     topic_list.rebuild = () => {
         topic_list_rebuilt = true;
     };
@@ -676,7 +687,7 @@ function make_topic_list_helper() {
 }
 
 function make_sidebar_helper() {
-    var updated_whether_active;
+    let updated_whether_active;
 
     function row_widget() {
         return {

@@ -1,8 +1,3 @@
-var click_handlers = (function () {
-
-// We don't actually export anything yet; this is just for consistency.
-var exports = {};
-
 // You won't find every click handler here, but it's a good place to start!
 
 exports.initialize = function () {
@@ -127,6 +122,10 @@ exports.initialize = function () {
             return;
         }
 
+        if ($(e.target).is(".message_edit_notice")) {
+            return;
+        }
+
         // A tricky issue here is distinguishing hasty clicks (where
         // the mouse might still move a few pixels between mouseup and
         // mousedown) from selecting-for-copy.  We handle this issue
@@ -189,6 +188,67 @@ exports.initialize = function () {
         var local_id = $(this).attr('data-reaction-id');
         var message_id = rows.get_message_id(this);
         reactions.process_reaction_click(message_id, local_id);
+        $(".tooltip").remove();
+    });
+
+    $('body').on('mouseenter', '.message_edit_notice', function (e) {
+        if (page_params.realm_allow_edit_history) {
+            $(e.currentTarget).addClass("message_edit_notice_hover");
+        }
+    });
+
+    $('body').on('mouseleave', '.message_edit_notice', function (e) {
+        if (page_params.realm_allow_edit_history) {
+            $(e.currentTarget).removeClass("message_edit_notice_hover");
+        }
+    });
+
+    $('body').on('click', '.message_edit_notice', function (e) {
+        popovers.hide_all();
+        var message_id = rows.id($(e.currentTarget).closest(".message_row"));
+        var row = current_msg_list.get_row(message_id);
+        var message = current_msg_list.get(rows.id(row));
+        var message_history_cancel_btn = $('#message-history-cancel');
+
+        if (page_params.realm_allow_edit_history) {
+            message_edit.show_history(message);
+            message_history_cancel_btn.focus();
+        }
+        e.stopPropagation();
+        e.preventDefault();
+    });
+
+    // TOOLTIP FOR MESSAGE REACTIONS
+
+    $('#main_div').on('mouseenter', '.message_reaction', function (e) {
+        e.stopPropagation();
+        var elem = $(e.currentTarget);
+        var local_id = elem.attr('data-reaction-id');
+        var message_id = rows.get_message_id(e.currentTarget);
+        var title = reactions.get_reaction_title_data(message_id, local_id);
+
+        elem.tooltip({
+            title: title,
+            trigger: 'hover',
+            placement: 'bottom',
+            animation: false,
+        });
+        elem.tooltip('show');
+        $(".tooltip, .tooltip-inner").css('max-width', "600px");
+        // Remove the arrow from the tooltip.
+        $(".tooltip-arrow").remove();
+    });
+
+    $('#main_div').on('mouseleave', '.message_reaction', function (e) {
+        e.stopPropagation();
+        $(e.currentTarget).tooltip('destroy');
+    });
+
+    // DESTROY PERSISTING TOOLTIPS ON HOVER
+
+    $("body").on('mouseenter', '.tooltip', function (e) {
+        e.stopPropagation();
+        $(e.currentTarget).remove();
     });
 
     $("#main_div").on("click", "a.stream", function (e) {
@@ -201,6 +261,16 @@ exports.initialize = function () {
             return;
         }
         window.location.href = $(this).attr('href');
+    });
+
+    // USER STATUS MODAL
+
+    $(".user-status-value").on("click", function (e) {
+        e.stopPropagation();
+        var user_status_value = $(e.currentTarget).attr("data-user-status-value");
+        $("input.user_status").val(user_status_value);
+        user_status_ui.toggle_clear_message_button();
+        user_status_ui.update_button();
     });
 
     // NOTIFICATION CLICK
@@ -451,14 +521,21 @@ exports.initialize = function () {
     });
 
     // this will hide the alerts that you click "x" on.
-    $("body").on("click", ".alert .exit", function () {
-        var $alert = $(this).closest(".alert");
+    $("body").on("click", ".alert-box > div .exit", function () {
+        var $alert = $(this).closest(".alert-box > div");
         $alert.addClass("fade-out");
         setTimeout(function () {
             $alert.removeClass("fade-out show");
         }, 300);
     });
 
+    $("#settings_page").on("click", ".collapse-settings-btn", function () {
+        settings_toggle.toggle_org_setting_collapse();
+    });
+
+    $(".alert-box").on("click", ".stackframe .expand", function () {
+        $(this).parent().siblings(".code-context").toggle("fast");
+    });
 
     // COMPOSE
 
@@ -541,7 +618,7 @@ exports.initialize = function () {
 
     $("#streams_inline_cog").click(function (e) {
         e.stopPropagation();
-        hashchange.go_to_location('streams/all');
+        hashchange.go_to_location('streams/subscribed');
     });
 
     $("#streams_filter_icon").click(function (e) {
@@ -608,6 +685,11 @@ exports.initialize = function () {
         e.stopPropagation();
     });
     // End Webathena code
+
+    // disable the draggability for left-sidebar components
+    $('#stream_filters, #global_filters').on('dragstart', function () {
+        return false;
+    });
 
     (function () {
         var map = {
@@ -806,11 +888,4 @@ exports.initialize = function () {
     });
 };
 
-return exports;
-
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = click_handlers;
-}
-window.click_handlers = click_handlers;
+window.click_handlers = exports;

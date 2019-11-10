@@ -1,12 +1,11 @@
-
 import cProfile
 import logging
 import time
 import traceback
 from typing import Any, AnyStr, Dict, \
-    Iterable, List, MutableMapping, Optional
+    Iterable, List, MutableMapping, Optional, \
+    Union
 
-from bs4 import BeautifulSoup
 from django.conf import settings
 from django.contrib.sessions.backends.base import UpdateError
 from django.contrib.sessions.middleware import SessionMiddleware
@@ -21,11 +20,11 @@ from django.utils.translation import ugettext as _
 from django.views.csrf import csrf_failure as html_csrf_failure
 
 from zerver.lib.bugdown import get_bugdown_requests, get_bugdown_time
-from zerver.lib.cache import get_remote_cache_requests, get_remote_cache_time, \
-    cache_with_key, open_graph_description_cache_key
+from zerver.lib.cache import get_remote_cache_requests, get_remote_cache_time
 from zerver.lib.debug import maybe_tracemalloc_listen
 from zerver.lib.db import reset_queries
 from zerver.lib.exceptions import ErrorCode, JsonableError, RateLimited
+from zerver.lib.html_to_text import get_content_description
 from zerver.lib.queue import queue_json_publish
 from zerver.lib.response import json_error, json_response_from_error
 from zerver.lib.subdomains import get_subdomain
@@ -80,7 +79,7 @@ def timedelta_ms(timedelta: float) -> float:
 
 def format_timedelta(timedelta: float) -> str:
     if (timedelta >= 1):
-        return "%.1fs" % (timedelta)
+        return "%.1fs" % (timedelta,)
     return "%.0fms" % (timedelta_ms(timedelta),)
 
 def is_slow_query(time_delta: float, path: str) -> bool:
@@ -160,7 +159,7 @@ def write_log_line(log_data: MutableMapping[str, Any], path: str, method: str, r
 
     startup_output = ""
     if 'startup_time_delta' in log_data and log_data["startup_time_delta"] > 0.005:
-        startup_output = " (+start: %s)" % (format_timedelta(log_data["startup_time_delta"]))
+        startup_output = " (+start: %s)" % (format_timedelta(log_data["startup_time_delta"]),)
 
     bugdown_output = ""
     if 'bugdown_time_start' in log_data:
@@ -213,7 +212,8 @@ def write_log_line(log_data: MutableMapping[str, Any], path: str, method: str, r
         logger.info(logger_line)
 
     if (is_slow_query(time_delta, path)):
-        queue_json_publish("slow_queries", "%s (%s)" % (logger_line, email))
+        queue_json_publish("slow_queries", dict(
+            query="%s (%s)" % (logger_line, email)))
 
     if settings.PROFILE_ALL_REQUESTS:
         log_data["prof"].disable()
@@ -224,14 +224,14 @@ def write_log_line(log_data: MutableMapping[str, Any], path: str, method: str, r
     if 400 <= status_code < 500 and status_code not in [401, 404, 405]:
         assert error_content_iter is not None
         error_content_list = list(error_content_iter)
-        if error_content_list:
+        if not error_content_list:
             error_data = u''
         elif isinstance(error_content_list[0], str):
             error_data = u''.join(error_content_list)
         elif isinstance(error_content_list[0], bytes):
             error_data = repr(b''.join(error_content_list))
-        if len(error_data) > 100:
-            error_data = u"[content more than 100 characters]"
+        if len(error_data) > 200:
+            error_data = u"[content more than 200 characters]"
         logger.info('status=%3d, data=%s, uid=%s' % (status_code, error_data, email))
 
 class LogRequests(MiddlewareMixin):
@@ -328,23 +328,30 @@ class RateLimitMiddleware(MiddlewareMixin):
 
         from zerver.lib.rate_limiter import max_api_calls, RateLimitedUser
         # Add X-RateLimit-*** headers
-        if hasattr(request, '_ratelimit_applied_limits'):
+        if hasattr(request, '_ratelimit'):
+            # Right now, the only kind of limiting requests is user-based.
+            ratelimit_user_results = request._ratelimit['RateLimitedUser']
             entity = RateLimitedUser(request.user)
             response['X-RateLimit-Limit'] = str(max_api_calls(entity))
-            if hasattr(request, '_ratelimit_secs_to_freedom'):
-                response['X-RateLimit-Reset'] = str(int(time.time() + request._ratelimit_secs_to_freedom))
-            if hasattr(request, '_ratelimit_remaining'):
-                response['X-RateLimit-Remaining'] = str(request._ratelimit_remaining)
+            response['X-RateLimit-Reset'] = str(int(time.time() + ratelimit_user_results['secs_to_freedom']))
+            if 'remaining' in ratelimit_user_results:
+                response['X-RateLimit-Remaining'] = str(ratelimit_user_results['remaining'])
         return response
 
-    def process_exception(self, request: HttpRequest, exception: Exception) -> Optional[HttpResponse]:
+    # TODO: When we have Django stubs, we should be able to fix the
+    # type of exception back to just Exception; the problem is without
+    # stubs, mypy doesn't know that RateLimited's superclass
+    # PermissionDenied inherits from Exception.
+    def process_exception(self, request: HttpRequest,
+                          exception: Union[Exception, RateLimited]) -> Optional[HttpResponse]:
         if isinstance(exception, RateLimited):
+            entity_type = str(exception)  # entity type is passed to RateLimited when raising
             resp = json_error(
                 _("API usage exceeded rate limit"),
-                data={'retry-after': request._ratelimit_secs_to_freedom},
+                data={'retry-after': request._ratelimit[entity_type]['secs_to_freedom']},
                 status=429
             )
-            resp['Retry-After'] = request._ratelimit_secs_to_freedom
+            resp['Retry-After'] = request._ratelimit[entity_type]['secs_to_freedom']
             return resp
         return None
 
@@ -371,8 +378,9 @@ class SessionHostDomainMiddleware(SessionMiddleware):
                 not request.path.startswith("/json/")):
             subdomain = get_subdomain(request)
             if subdomain != Realm.SUBDOMAIN_FOR_ROOT_DOMAIN:
-                realm = get_realm(subdomain)
-                if (realm is None):
+                try:
+                    get_realm(subdomain)
+                except Realm.DoesNotExist:
                     return render(request, "zerver/invalid_realm.html", status=404)
         """
         If request.session was modified, or if the configuration is to save the
@@ -453,29 +461,6 @@ class SetRemoteAddrFromForwardedFor(MiddlewareMixin):
             # For NGINX reverse proxy servers, the client's IP will be the first one.
             real_ip = real_ip.split(",")[0].strip()
             request.META['REMOTE_ADDR'] = real_ip
-
-@cache_with_key(open_graph_description_cache_key, timeout=3600*24)
-def get_content_description(content: bytes, request: HttpRequest) -> str:
-    str_content = content.decode("utf-8")
-    bs = BeautifulSoup(str_content, features='lxml')
-    # Skip any admonition (warning) blocks, since they're
-    # usually something about users needing to be an
-    # organization administrator, and not useful for
-    # describing the page.
-    for tag in bs.find_all('div', class_="admonition"):
-        tag.clear()
-
-    # Skip code-sections, which just contains navigation instructions.
-    for tag in bs.find_all('div', class_="code-section"):
-        tag.clear()
-
-    text = ''
-    for paragraph in bs.find_all('p'):
-        # .text converts it from HTML to text
-        text = text + paragraph.text + ' '
-        if len(text) > 500:
-            return ' '.join(text.split())
-    return ' '.join(text.split())
 
 def alter_content(request: HttpRequest, content: bytes) -> bytes:
     first_paragraph_text = get_content_description(content, request)

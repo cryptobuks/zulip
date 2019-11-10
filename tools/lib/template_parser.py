@@ -61,7 +61,7 @@ def tokenize(text):
         return looking_at("{#")
 
     def looking_at_handlebarpartial() -> bool:
-        return looking_at("{{partial")
+        return looking_at("{{>")
 
     def looking_at_html_start():
         # type: () -> bool
@@ -86,6 +86,15 @@ def tokenize(text):
     def looking_at_django_end():
         # type: () -> bool
         return looking_at("{% end")
+
+    def looking_at_jinja2_end_whitespace_stripped():
+        # type: () -> bool
+        return looking_at("{%- end")
+
+    def looking_at_jinja2_start_whitespace_stripped_type2():
+        # type: () -> bool
+        # This function detects tag like {%- if foo -%}...{% endif %}
+        return looking_at("{%-") and not looking_at("{%- end")
 
     state = TokenizerState()
     tokens = []
@@ -139,10 +148,21 @@ def tokenize(text):
                 s = get_django_tag(text, state.i)
                 tag = s[3:-2].split()[0]
                 kind = 'django_start'
+
+                if s[-3] == '-':
+                    kind = 'jinja2_whitespace_stripped_start'
             elif looking_at_django_end():
                 s = get_django_tag(text, state.i)
                 tag = s[6:-3]
                 kind = 'django_end'
+            elif looking_at_jinja2_end_whitespace_stripped():
+                s = get_django_tag(text, state.i)
+                tag = s[7:-3]
+                kind = 'jinja2_whitespace_stripped_end'
+            elif looking_at_jinja2_start_whitespace_stripped_type2():
+                s = get_jinja2_whitespace_stripped_tag(text, state.i)
+                tag = s[3:-3].split()[0]
+                kind = 'jinja2_whitespace_stripped_type2_start'
             else:
                 advance(1)
                 continue
@@ -194,7 +214,8 @@ def validate(fn=None, text=None, check_indent=True):
         fn = '<in memory file>'
 
     if text is None:
-        text = open(fn).read()
+        with open(fn, 'r') as f:
+            text = f.read()
 
     tokens = tokenize(text)
 
@@ -274,7 +295,8 @@ def validate(fn=None, text=None, check_indent=True):
         elif kind == 'handlebars_end':
             state.matcher(token)
 
-        elif kind == 'django_start':
+        elif kind in {'django_start',
+                      'jinja2_whitespace_stripped_type2_start'}:
             if is_django_block_tag(tag):
                 start_tag_matcher(token)
         elif kind == 'django_end':
@@ -314,6 +336,7 @@ def is_django_block_tag(tag):
         'for',
         'if',
         'ifequal',
+        'macro',
         'verbatim',
         'blocktrans',
         'trans',
@@ -338,6 +361,16 @@ def get_django_tag(text, i):
         end += 1
     if text[end] != '%' or text[end+1] != '}':
         raise TokenizationException('Tag missing "%}"', text[i:end+2])
+    s = text[i:end+2]
+    return s
+
+def get_jinja2_whitespace_stripped_tag(text, i):
+    # type: (str, int) -> str
+    end = i + 3
+    while end < len(text) - 1 and text[end] != '%':
+        end += 1
+    if text[end-1] != '-' or text[end] != '%' or text[end+1] != '}':
+        raise TokenizationException('Tag missing "-%}"', text[i:end+2])
     s = text[i:end+2]
     return s
 

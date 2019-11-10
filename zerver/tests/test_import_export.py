@@ -8,6 +8,7 @@ import ujson
 from mock import patch
 from typing import Any, Dict, List, Set, Optional, Tuple, Callable, \
     FrozenSet
+from django.db.models import Q
 
 from zerver.lib.export import (
     do_export_realm,
@@ -49,6 +50,8 @@ from zerver.lib.bot_config import (
 )
 from zerver.lib.actions import (
     do_create_user,
+    do_add_reaction,
+    create_stream_if_needed
 )
 
 from zerver.lib.test_runner import slow
@@ -61,6 +64,7 @@ from zerver.models import (
     Subscription,
     Attachment,
     RealmEmoji,
+    Reaction,
     Recipient,
     UserMessage,
     CustomProfileField,
@@ -216,15 +220,17 @@ class QueryUtilTest(ZulipTestCase):
 class ImportExportTest(ZulipTestCase):
 
     def setUp(self) -> None:
+        super().setUp()
         self.rm_tree(settings.LOCAL_UPLOADS_DIR)
 
     def _make_output_dir(self) -> str:
-        output_dir = 'var/test-export'
+        output_dir = os.path.join(settings.TEST_WORKER_DIR, 'test-export')
         self.rm_tree(output_dir)
         os.makedirs(output_dir, exist_ok=True)
         return output_dir
 
-    def _export_realm(self, realm: Realm, exportable_user_ids: Optional[Set[int]]=None) -> Dict[str, Any]:
+    def _export_realm(self, realm: Realm, exportable_user_ids: Optional[Set[int]]=None,
+                      consent_message_id: Optional[int]=None) -> Dict[str, Any]:
         output_dir = self._make_output_dir()
         with patch('logging.info'), patch('zerver.lib.export.create_soft_link'):
             do_export_realm(
@@ -232,13 +238,22 @@ class ImportExportTest(ZulipTestCase):
                 output_dir=output_dir,
                 threads=0,
                 exportable_user_ids=exportable_user_ids,
+                consent_message_id=consent_message_id,
             )
-            # TODO: Process the second partial file, which can be created
-            #       for certain edge cases.
             export_usermessages_batch(
                 input_path=os.path.join(output_dir, 'messages-000001.json.partial'),
-                output_path=os.path.join(output_dir, 'messages-000001.json')
+                output_path=os.path.join(output_dir, 'messages-000001.json'),
+                consent_message_id=consent_message_id,
             )
+
+            try:
+                export_usermessages_batch(
+                    input_path=os.path.join(output_dir, 'messages-000002.json.partial'),
+                    output_path=os.path.join(output_dir, 'messages-000002.json'),
+                    consent_message_id=consent_message_id,
+                )
+            except FileNotFoundError:
+                pass
 
         def read_file(fn: str) -> Any:
             full_fn = os.path.join(output_dir, fn)
@@ -249,6 +264,12 @@ class ImportExportTest(ZulipTestCase):
         result['realm'] = read_file('realm.json')
         result['attachment'] = read_file('attachment.json')
         result['message'] = read_file('messages-000001.json')
+        try:
+            message = read_file('messages-000002.json')
+            result["message"]["zerver_usermessage"].extend(message["zerver_usermessage"])
+            result["message"]["zerver_message"].extend(message["zerver_message"])
+        except FileNotFoundError:
+            pass
         result['uploads_dir'] = os.path.join(output_dir, 'uploads')
         result['uploads_dir_records'] = read_file(os.path.join('uploads', 'records.json'))
         result['emoji_dir'] = os.path.join(output_dir, 'emoji')
@@ -281,7 +302,8 @@ class ImportExportTest(ZulipTestCase):
             upload_emoji_image(img_file, '1.png', user_profile)
         with get_test_image_file('img.png') as img_file:
             upload_avatar_image(img_file, user_profile, user_profile)
-        test_image = open(get_test_image_file('img.png').name, 'rb').read()
+        with open(get_test_image_file('img.png').name, 'rb') as f:
+            test_image = f.read()
         message.sender.avatar_source = 'U'
         message.sender.save()
 
@@ -303,7 +325,7 @@ class ImportExportTest(ZulipTestCase):
 
         # Test uploads
         fn = os.path.join(full_data['uploads_dir'], path_id)
-        with open(fn) as f:
+        with open(fn, 'r') as f:
             self.assertEqual(f.read(), 'zulip!')
         records = full_data['uploads_dir_records']
         self.assertEqual(records[0]['path'], path_id)
@@ -315,12 +337,13 @@ class ImportExportTest(ZulipTestCase):
         self.assertEqual('1.png', os.listdir(fn)[0])
         records = full_data['emoji_dir_records']
         self.assertEqual(records[0]['file_name'], '1.png')
-        self.assertEqual(records[0]['path'], '1/emoji/images/1.png')
-        self.assertEqual(records[0]['s3_path'], '1/emoji/images/1.png')
+        self.assertEqual(records[0]['path'], '2/emoji/images/1.png')
+        self.assertEqual(records[0]['s3_path'], '2/emoji/images/1.png')
 
         # Test avatars
         fn = os.path.join(full_data['avatar_dir'], original_avatar_path_id)
-        fn_data = open(fn, 'rb').read()
+        with open(fn, 'rb') as fb:
+            fn_data = fb.read()
         self.assertEqual(fn_data, test_image)
         records = full_data['avatar_dir_records']
         record_path = [record['path'] for record in records]
@@ -350,7 +373,7 @@ class ImportExportTest(ZulipTestCase):
         # Test uploads
         fields = attachment_path_id.split('/')
         fn = os.path.join(full_data['uploads_dir'], os.path.join(fields[0], fields[1], fields[2]))
-        with open(fn) as f:
+        with open(fn, 'r') as f:
             self.assertEqual(f.read(), 'zulip!')
         records = full_data['uploads_dir_records']
         self.assertEqual(records[0]['path'], os.path.join(fields[0], fields[1], fields[2]))
@@ -364,13 +387,14 @@ class ImportExportTest(ZulipTestCase):
         records = full_data['emoji_dir_records']
         self.assertEqual(records[0]['file_name'], '1.png')
         self.assertTrue('last_modified' in records[0])
-        self.assertEqual(records[0]['path'], '1/emoji/images/1.png')
-        self.assertEqual(records[0]['s3_path'], '1/emoji/images/1.png')
+        self.assertEqual(records[0]['path'], '2/emoji/images/1.png')
+        self.assertEqual(records[0]['s3_path'], '2/emoji/images/1.png')
         check_variable_type(records[0]['user_profile_id'], records[0]['realm_id'])
 
         # Test avatars
         fn = os.path.join(full_data['avatar_dir'], original_avatar_path_id)
-        fn_data = open(fn, 'rb').read()
+        with open(fn, 'rb') as file:
+            fn_data = file.read()
         self.assertEqual(fn_data, test_image)
         records = full_data['avatar_dir_records']
         record_path = [record['path'] for record in records]
@@ -381,31 +405,25 @@ class ImportExportTest(ZulipTestCase):
 
     def test_zulip_realm(self) -> None:
         realm = Realm.objects.get(string_id='zulip')
+
+        pm_a_msg_id = self.send_personal_message(self.example_email("AARON"), "default-bot@zulip.com")
+        pm_b_msg_id = self.send_personal_message("default-bot@zulip.com", self.example_email("iago"))
+        pm_c_msg_id = self.send_personal_message(self.example_email("othello"), self.example_email("hamlet"))
+
         realm_emoji = RealmEmoji.objects.get(realm=realm)
         realm_emoji.delete()
         full_data = self._export_realm(realm)
         realm_emoji.save()
 
         data = full_data['realm']
-        self.assertEqual(len(data['zerver_userprofile_crossrealm']), 0)
+        self.assertEqual(len(data['zerver_userprofile_crossrealm']), 3)
         self.assertEqual(len(data['zerver_userprofile_mirrordummy']), 0)
 
-        def get_set(table: str, field: str) -> Set[str]:
-            values = set(r[field] for r in data[table])
-            # print('set(%s)' % sorted(values))
-            return values
-
-        def find_by_id(table: str, db_id: int) -> Dict[str, Any]:
-            return [
-                r for r in data[table]
-                if r['id'] == db_id][0]
-
-        exported_user_emails = get_set('zerver_userprofile', 'email')
+        exported_user_emails = self.get_set(data['zerver_userprofile'], 'email')
         self.assertIn(self.example_email('cordelia'), exported_user_emails)
         self.assertIn('default-bot@zulip.com', exported_user_emails)
-        self.assertIn('emailgateway@zulip.com', exported_user_emails)
 
-        exported_streams = get_set('zerver_stream', 'name')
+        exported_streams = self.get_set(data['zerver_stream'], 'name')
         self.assertEqual(
             exported_streams,
             set([u'Denmark', u'Rome', u'Scotland', u'Venice', u'Verona'])
@@ -413,19 +431,29 @@ class ImportExportTest(ZulipTestCase):
 
         data = full_data['message']
         um = UserMessage.objects.all()[0]
-        exported_um = find_by_id('zerver_usermessage', um.id)
+        exported_um = self.find_by_id(data['zerver_usermessage'], um.id)
         self.assertEqual(exported_um['message'], um.message_id)
         self.assertEqual(exported_um['user_profile'], um.user_profile_id)
 
-        exported_message = find_by_id('zerver_message', um.message_id)
+        exported_message = self.find_by_id(data['zerver_message'], um.message_id)
         self.assertEqual(exported_message['content'], um.message.content)
 
-        # TODO, extract get_set/find_by_id, so we can split this test up
+        exported_message_ids = self.get_set(data['zerver_message'], "id")
+        self.assertIn(pm_a_msg_id, exported_message_ids)
+        self.assertIn(pm_b_msg_id, exported_message_ids)
+        self.assertIn(pm_c_msg_id, exported_message_ids)
 
-        # Now, restrict users
-        cordelia = self.example_user('cordelia')
+    def test_export_realm_with_exportable_user_ids(self) -> None:
+        realm = Realm.objects.get(string_id='zulip')
+
+        cordelia = self.example_user('iago')
         hamlet = self.example_user('hamlet')
         user_ids = set([cordelia.id, hamlet.id])
+
+        pm_a_msg_id = self.send_personal_message(self.example_email("AARON"), self.example_email("othello"))
+        pm_b_msg_id = self.send_personal_message(self.example_email("cordelia"), self.example_email("iago"))
+        pm_c_msg_id = self.send_personal_message(self.example_email("hamlet"), self.example_email("othello"))
+        pm_d_msg_id = self.send_personal_message(self.example_email("iago"), self.example_email("hamlet"))
 
         realm_emoji = RealmEmoji.objects.get(realm=realm)
         realm_emoji.delete()
@@ -433,15 +461,148 @@ class ImportExportTest(ZulipTestCase):
         realm_emoji.save()
 
         data = full_data['realm']
-        exported_user_emails = get_set('zerver_userprofile', 'email')
-        self.assertIn(self.example_email('cordelia'), exported_user_emails)
+
+        exported_user_emails = self.get_set(data['zerver_userprofile'], 'email')
+        self.assertIn(self.example_email('iago'), exported_user_emails)
         self.assertIn(self.example_email('hamlet'), exported_user_emails)
         self.assertNotIn('default-bot@zulip.com', exported_user_emails)
-        self.assertNotIn(self.example_email('iago'), exported_user_emails)
+        self.assertNotIn(self.example_email('cordelia'), exported_user_emails)
 
-        dummy_user_emails = get_set('zerver_userprofile_mirrordummy', 'email')
-        self.assertIn(self.example_email('iago'), dummy_user_emails)
-        self.assertNotIn(self.example_email('cordelia'), dummy_user_emails)
+        dummy_user_emails = self.get_set(data['zerver_userprofile_mirrordummy'], 'email')
+        self.assertIn(self.example_email('cordelia'), dummy_user_emails)
+        self.assertIn(self.example_email('othello'), dummy_user_emails)
+        self.assertIn('default-bot@zulip.com', dummy_user_emails)
+        self.assertNotIn(self.example_email('iago'), dummy_user_emails)
+        self.assertNotIn(self.example_email('hamlet'), dummy_user_emails)
+
+        data = full_data['message']
+
+        exported_message_ids = self.get_set(data['zerver_message'], "id")
+        self.assertNotIn(pm_a_msg_id, exported_message_ids)
+        self.assertIn(pm_b_msg_id, exported_message_ids)
+        self.assertIn(pm_c_msg_id, exported_message_ids)
+        self.assertIn(pm_d_msg_id, exported_message_ids)
+
+    def test_export_realm_with_member_consent(self) -> None:
+        realm = Realm.objects.get(string_id='zulip')
+
+        # Create private streams and subscribe users for testing export
+        create_stream_if_needed(realm, "Private A", invite_only=True)
+        self.subscribe(self.example_user("iago"), "Private A")
+        self.subscribe(self.example_user("othello"), "Private A")
+        self.send_stream_message(self.example_email("iago"), "Private A", "Hello Stream A")
+
+        create_stream_if_needed(realm, "Private B", invite_only=True)
+        self.subscribe(self.example_user("prospero"), "Private B")
+        stream_b_message_id = self.send_stream_message(self.example_email("prospero"),
+                                                       "Private B", "Hello Stream B")
+        self.subscribe(self.example_user("hamlet"), "Private B")
+
+        create_stream_if_needed(realm, "Private C", invite_only=True)
+        self.subscribe(self.example_user("othello"), "Private C")
+        self.subscribe(self.example_user("prospero"), "Private C")
+        stream_c_message_id = self.send_stream_message(self.example_email("othello"),
+                                                       "Private C", "Hello Stream C")
+
+        # Create huddles
+        self.send_huddle_message(self.example_email("iago"), [self.example_email("cordelia"),
+                                                              self.example_email("AARON")])
+        huddle_a = Huddle.objects.last()
+        self.send_huddle_message(self.example_email("ZOE"), [self.example_email("hamlet"),
+                                                             self.example_email("AARON"),
+                                                             self.example_email("othello")])
+        huddle_b = Huddle.objects.last()
+
+        huddle_c_message_id = self.send_huddle_message(
+            self.example_email("AARON"), [self.example_email("cordelia"),
+                                          self.example_email("ZOE"),
+                                          self.example_email("othello")])
+
+        # Create PMs
+        pm_a_msg_id = self.send_personal_message(self.example_email("AARON"), self.example_email("othello"))
+        pm_b_msg_id = self.send_personal_message(self.example_email("cordelia"), self.example_email("iago"))
+        pm_c_msg_id = self.send_personal_message(self.example_email("hamlet"), self.example_email("othello"))
+        pm_d_msg_id = self.send_personal_message(self.example_email("iago"), self.example_email("hamlet"))
+
+        # Send message advertising export and make users react
+        self.send_stream_message(self.example_email("othello"), "Verona",
+                                 topic_name="Export",
+                                 content="Thumbs up for export")
+        message = Message.objects.last()
+        consented_user_ids = [self.example_user(user).id for user in ["iago", "hamlet"]]
+        do_add_reaction(self.example_user("iago"), message, "outbox", "1f4e4",  Reaction.UNICODE_EMOJI)
+        do_add_reaction(self.example_user("hamlet"), message, "outbox", "1f4e4",  Reaction.UNICODE_EMOJI)
+
+        realm_emoji = RealmEmoji.objects.get(realm=realm)
+        realm_emoji.delete()
+        full_data = self._export_realm(realm, consent_message_id=message.id)
+        realm_emoji.save()
+
+        data = full_data['realm']
+
+        self.assertEqual(len(data['zerver_userprofile_crossrealm']), 3)
+        self.assertEqual(len(data['zerver_userprofile_mirrordummy']), 0)
+
+        exported_user_emails = self.get_set(data['zerver_userprofile'], 'email')
+        self.assertIn(self.example_email('cordelia'), exported_user_emails)
+        self.assertIn(self.example_email('hamlet'), exported_user_emails)
+        self.assertIn(self.example_email('iago'), exported_user_emails)
+        self.assertIn(self.example_email('othello'), exported_user_emails)
+        self.assertIn('default-bot@zulip.com', exported_user_emails)
+
+        exported_streams = self.get_set(data['zerver_stream'], 'name')
+        self.assertEqual(
+            exported_streams,
+            set([u'Denmark', u'Rome', u'Scotland', u'Venice', u'Verona',
+                 u'Private A', u'Private B', u'Private C'])
+        )
+
+        data = full_data['message']
+        exported_usermessages = UserMessage.objects.filter(user_profile__in=[self.example_user("iago"),
+                                                                             self.example_user("hamlet")])
+        um = exported_usermessages[0]
+        self.assertEqual(len(data["zerver_usermessage"]), len(exported_usermessages))
+        exported_um = self.find_by_id(data['zerver_usermessage'], um.id)
+        self.assertEqual(exported_um['message'], um.message_id)
+        self.assertEqual(exported_um['user_profile'], um.user_profile_id)
+
+        exported_message = self.find_by_id(data['zerver_message'], um.message_id)
+        self.assertEqual(exported_message['content'], um.message.content)
+
+        public_stream_names = ['Denmark', 'Rome', 'Scotland', 'Venice', 'Verona']
+        public_stream_ids = Stream.objects.filter(name__in=public_stream_names).values_list("id", flat=True)
+        public_stream_recipients = Recipient.objects.filter(type_id__in=public_stream_ids, type=Recipient.STREAM)
+        public_stream_message_ids = Message.objects.filter(recipient__in=public_stream_recipients).values_list("id", flat=True)
+
+        # Messages from Private Stream C are not exported since no member gave consent
+        private_stream_ids = Stream.objects.filter(name__in=["Private A", "Private B"]).values_list("id", flat=True)
+        private_stream_recipients = Recipient.objects.filter(type_id__in=private_stream_ids, type=Recipient.STREAM)
+        private_stream_message_ids = Message.objects.filter(recipient__in=private_stream_recipients).values_list("id", flat=True)
+
+        pm_recipients = Recipient.objects.filter(type_id__in=consented_user_ids, type=Recipient.PERSONAL)
+        pm_query = Q(recipient__in=pm_recipients) | Q(sender__in=consented_user_ids)
+        exported_pm_ids = Message.objects.filter(pm_query).values_list("id", flat=True).values_list("id", flat=True)
+
+        # Third huddle is not exported since none of the members gave consent
+        huddle_recipients = Recipient.objects.filter(type_id__in=[huddle_a.id, huddle_b.id], type=Recipient.HUDDLE)
+        pm_query = Q(recipient__in=huddle_recipients) | Q(sender__in=consented_user_ids)
+        exported_huddle_ids = Message.objects.filter(pm_query).values_list("id", flat=True).values_list("id", flat=True)
+
+        exported_msg_ids = set(public_stream_message_ids) | set(private_stream_message_ids) \
+            | set(exported_pm_ids) | set(exported_huddle_ids)
+        self.assertEqual(self.get_set(data["zerver_message"], "id"), exported_msg_ids)
+
+        # TODO: This behavior is wrong and should be fixed. The message should not be exported
+        # since it was sent before the only consented user iago joined the stream.
+        self.assertIn(stream_b_message_id, exported_msg_ids)
+
+        self.assertNotIn(stream_c_message_id, exported_msg_ids)
+        self.assertNotIn(huddle_c_message_id, exported_msg_ids)
+
+        self.assertNotIn(pm_a_msg_id, exported_msg_ids)
+        self.assertIn(pm_b_msg_id, exported_msg_ids)
+        self.assertIn(pm_c_msg_id, exported_msg_ids)
+        self.assertIn(pm_d_msg_id, exported_msg_ids)
 
     def test_export_single_user(self) -> None:
         output_dir = self._make_output_dir()
@@ -455,30 +616,25 @@ class ImportExportTest(ZulipTestCase):
             with open(full_fn) as f:
                 return ujson.load(f)
 
-        def get_set(data: List[Dict[str, Any]], field: str) -> Set[str]:
-            values = set(r[field] for r in data)
-            # print('set(%s)' % sorted(values))
-            return values
-
         messages = read_file('messages-000001.json')
         user = read_file('user.json')
 
-        exported_user_id = get_set(user['zerver_userprofile'], 'id')
+        exported_user_id = self.get_set(user['zerver_userprofile'], 'id')
         self.assertEqual(exported_user_id, set([cordelia.id]))
-        exported_user_email = get_set(user['zerver_userprofile'], 'email')
+        exported_user_email = self.get_set(user['zerver_userprofile'], 'email')
         self.assertEqual(exported_user_email, set([cordelia.email]))
 
-        exported_recipient_type_id = get_set(user['zerver_recipient'], 'type_id')
+        exported_recipient_type_id = self.get_set(user['zerver_recipient'], 'type_id')
         self.assertIn(cordelia.id, exported_recipient_type_id)
 
-        exported_stream_id = get_set(user['zerver_stream'], 'id')
+        exported_stream_id = self.get_set(user['zerver_stream'], 'id')
         self.assertIn(list(exported_stream_id)[0], exported_recipient_type_id)
 
-        exported_recipient_id = get_set(user['zerver_recipient'], 'id')
-        exported_subscription_recipient = get_set(user['zerver_subscription'], 'recipient')
+        exported_recipient_id = self.get_set(user['zerver_recipient'], 'id')
+        exported_subscription_recipient = self.get_set(user['zerver_subscription'], 'recipient')
         self.assertEqual(exported_recipient_id, exported_subscription_recipient)
 
-        exported_messages_recipient = get_set(messages['zerver_message'], 'recipient')
+        exported_messages_recipient = self.get_set(messages['zerver_message'], 'recipient')
         self.assertIn(list(exported_messages_recipient)[0], exported_recipient_id)
 
     """
@@ -496,6 +652,18 @@ class ImportExportTest(ZulipTestCase):
         self.send_huddle_message(
             self.example_email('cordelia'), huddle, 'test huddle message'
         )
+
+        user_mention_message = '@**King Hamlet** Hello'
+        self.send_stream_message(self.example_email("iago"), "Verona", user_mention_message)
+
+        stream_mention_message = 'Subscribe to #**Denmark**'
+        self.send_stream_message(self.example_email("hamlet"), "Verona", stream_mention_message)
+
+        user_group_mention_message = 'Hello @*hamletcharacters*'
+        self.send_stream_message(self.example_email("othello"), "Verona", user_group_mention_message)
+
+        special_characters_message = "```\n'\n```\n@**Polonius**"
+        self.send_stream_message(self.example_email("iago"), "Denmark", special_characters_message)
 
         # data to test import of hotspots
         sample_user = self.example_user('hamlet')
@@ -530,7 +698,8 @@ class ImportExportTest(ZulipTestCase):
 
         with patch('logging.info'):
             with self.settings(BILLING_ENABLED=False):
-                do_import_realm('var/test-export', 'test-zulip')
+                do_import_realm(os.path.join(settings.TEST_WORKER_DIR, 'test-export'),
+                                'test-zulip')
 
         # sanity checks
 
@@ -552,7 +721,7 @@ class ImportExportTest(ZulipTestCase):
 
         # test users
         assert_realm_values(
-            lambda r: {user.email for user in r.get_admin_users()}
+            lambda r: {user.email for user in r.get_admin_users_and_bots()}
         )
 
         assert_realm_values(
@@ -727,6 +896,58 @@ class ImportExportTest(ZulipTestCase):
 
         assert_realm_values(get_usermessages_user)
 
+        # tests to make sure that various data-*-ids in rendered_content
+        # are replaced correctly with the values of newer realm.
+
+        def get_user_mention(r: Realm) -> Set[Any]:
+            mentioned_user = UserProfile.objects.get(delivery_email=self.example_email("hamlet"), realm=r)
+            data_user_id = 'data-user-id="{}"'.format(mentioned_user.id)
+            mention_message = get_stream_messages(r).get(rendered_content__contains=data_user_id)
+            return mention_message.content
+
+        assert_realm_values(get_user_mention)
+
+        def get_stream_mention(r: Realm) -> Set[Any]:
+            mentioned_stream = get_stream(u'Denmark', r)
+            data_stream_id = 'data-stream-id="{}"'.format(mentioned_stream.id)
+            mention_message = get_stream_messages(r).get(rendered_content__contains=data_stream_id)
+            return mention_message.content
+
+        assert_realm_values(get_stream_mention)
+
+        def get_user_group_mention(r: Realm) -> Set[Any]:
+            user_group = UserGroup.objects.get(realm=r, name='hamletcharacters')
+            data_usergroup_id = 'data-user-group-id="{}"'.format(user_group.id)
+            mention_message = get_stream_messages(r).get(rendered_content__contains=data_usergroup_id)
+            return mention_message.content
+
+        assert_realm_values(get_user_group_mention)
+
+        # test to highlight that bs4 which we use to do data-**id
+        # replacements modifies the HTML sometimes. eg replacing <br>
+        # with </br>, &#39; with \' etc. The modifications doesn't
+        # affect how the browser displays the rendered_content so we
+        # are okay with using bs4 for this.  lxml package also has
+        # similar behavior.
+        orig_polonius_user = UserProfile.objects.get(email=self.example_email("polonius"),
+                                                     realm=original_realm)
+        original_msg = Message.objects.get(content=special_characters_message, sender__realm=original_realm)
+        self.assertEqual(
+            original_msg.rendered_content,
+            ('<div class="codehilite"><pre><span></span>&#39;\n</pre></div>\n\n\n'
+             '<p><span class="user-mention" data-user-id="%s">@Polonius</span></p>' %
+             (orig_polonius_user.id,))
+        )
+        imported_polonius_user = UserProfile.objects.get(email=self.example_email("polonius"),
+                                                         realm=imported_realm)
+        imported_msg = Message.objects.get(content=special_characters_message, sender__realm=imported_realm)
+        self.assertEqual(
+            imported_msg.rendered_content,
+            ('<div class="codehilite"><pre><span></span>\'\n</pre></div>\n'
+             '<p><span class="user-mention" data-user-id="%s">@Polonius</span></p>' %
+             (imported_polonius_user.id,))
+        )
+
     def test_import_files_from_local(self) -> None:
 
         realm = Realm.objects.get(string_id='zulip')
@@ -734,7 +955,8 @@ class ImportExportTest(ZulipTestCase):
         self._export_realm(realm)
 
         with patch('logging.info'):
-            do_import_realm('var/test-export', 'test-zulip')
+            do_import_realm(os.path.join(settings.TEST_WORKER_DIR, 'test-export'),
+                            'test-zulip')
         imported_realm = Realm.objects.get(string_id='test-zulip')
 
         # Test attachments
@@ -770,9 +992,11 @@ class ImportExportTest(ZulipTestCase):
         self._setup_export_files()
         self._export_realm(realm)
         with patch('logging.info'):
-            do_import_realm('var/test-export', 'test-zulip')
+            do_import_realm(os.path.join(settings.TEST_WORKER_DIR, 'test-export'),
+                            'test-zulip')
         imported_realm = Realm.objects.get(string_id='test-zulip')
-        test_image_data = open(get_test_image_file('img.png').name, 'rb').read()
+        with open(get_test_image_file('img.png').name, 'rb') as f:
+            test_image_data = f.read()
 
         # Test attachments
         uploaded_file = Attachment.objects.get(realm=imported_realm)
@@ -826,12 +1050,14 @@ class ImportExportTest(ZulipTestCase):
 
         with patch('logging.info'):
             with self.settings(BILLING_ENABLED=True):
-                realm = do_import_realm('var/test-export', 'test-zulip-1')
+                realm = do_import_realm(os.path.join(settings.TEST_WORKER_DIR, 'test-export'),
+                                        'test-zulip-1')
                 self.assertTrue(realm.plan_type, Realm.LIMITED)
                 self.assertTrue(RealmAuditLog.objects.filter(
                     realm=realm, event_type=RealmAuditLog.REALM_PLAN_TYPE_CHANGED).exists())
             with self.settings(BILLING_ENABLED=False):
-                realm = do_import_realm('var/test-export', 'test-zulip-2')
+                realm = do_import_realm(os.path.join(settings.TEST_WORKER_DIR, 'test-export'),
+                                        'test-zulip-2')
                 self.assertTrue(realm.plan_type, Realm.SELF_HOSTED)
                 self.assertTrue(RealmAuditLog.objects.filter(
                     realm=realm, event_type=RealmAuditLog.REALM_PLAN_TYPE_CHANGED).exists())

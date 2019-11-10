@@ -1,9 +1,9 @@
-var pmc = zrequire('pm_conversations');
+const pmc = zrequire('pm_conversations');
 
 run_test('partners', () => {
-    var user1_id = 1;
-    var user2_id = 2;
-    var user3_id = 3;
+    const user1_id = 1;
+    const user2_id = 2;
+    const user3_id = 3;
 
     pmc.set_partner(user1_id);
     pmc.set_partner(user3_id);
@@ -28,4 +28,3 @@ run_test('insert_recent_private_message', () => {
 
     assert.deepEqual(pmc.recent.get_strings(), ['1', '2']);
 });
-

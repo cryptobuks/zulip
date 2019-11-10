@@ -48,12 +48,15 @@ class MITNameTest(ZulipTestCase):
 class RateLimitTests(ZulipTestCase):
 
     def setUp(self) -> None:
+        super().setUp()
         settings.RATE_LIMITING = True
         add_ratelimit_rule(1, 5)
 
     def tearDown(self) -> None:
         settings.RATE_LIMITING = False
         remove_ratelimit_rule(1, 5)
+
+        super().tearDown()
 
     def send_api_message(self, email: str, content: str) -> HttpResponse:
         return self.api_post(email, "/api/v1/messages", {"type": "stream",
@@ -109,12 +112,15 @@ class RateLimitTests(ZulipTestCase):
 
             self.assert_json_success(result)
 
-    def test_hit_ratelimiterlockingexception(self) -> None:
+    @mock.patch('zerver.lib.rate_limiter.logger.warning')
+    def test_hit_ratelimiterlockingexception(self, mock_warn: mock.MagicMock) -> None:
         user = self.example_user('cordelia')
         email = user.email
         clear_history(RateLimitedUser(user))
 
-        with mock.patch('zerver.decorator.incr_ratelimit',
+        with mock.patch('zerver.lib.rate_limiter.incr_ratelimit',
                         side_effect=RateLimiterLockingException):
             result = self.send_api_message(email, "some stuff")
             self.assertEqual(result.status_code, 429)
+            mock_warn.assert_called_with("Deadlock trying to incr_ratelimit for RateLimitedUser:Id: %s"
+                                         % (user.id,))

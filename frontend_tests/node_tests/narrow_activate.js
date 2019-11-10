@@ -17,7 +17,9 @@ set_global('current_msg_list', {});
 set_global('hashchange', {});
 set_global('home_msg_list', {});
 set_global('message_fetch', {});
-set_global('message_list', {});
+set_global('message_list', {
+    set_narrowed: function (value) { this.narrowed = value; },
+});
 set_global('message_scroll', {});
 set_global('message_util', {});
 set_global('notifications', {});
@@ -37,7 +39,7 @@ set_global('search_pill_widget', {
 });
 
 
-var noop = () => {};
+const noop = () => {};
 //
 // We have strange hacks in narrow.activate to sleep 0
 // seconds.
@@ -50,17 +52,17 @@ set_global('muting', {
     is_topic_muted: () => false,
 });
 
-var denmark = {
+const denmark = {
     subscribed: false,
     color: 'blue',
     name: 'Denmark',
     stream_id: 1,
-    in_home_view: false,
+    is_muted: true,
 };
 stream_data.add_sub('Denmark', denmark);
 
 function test_helper() {
-    var events = [];
+    let events = [];
 
     function stub(module_name, func_name) {
         global[module_name][func_name] = () => {
@@ -102,7 +104,7 @@ function test_helper() {
 
 function stub_message_list() {
     message_list.MessageList = function (opts) {
-        var list = this;
+        const list = this;
         this.data = opts.data;
         this.view = {
             set_message_offset: function (offset) {
@@ -131,23 +133,23 @@ function stub_message_list() {
 run_test('basics', () => {
     stub_message_list();
 
-    var helper = test_helper();
-    var terms = [
+    const helper = test_helper();
+    const terms = [
         { operator: 'stream', operand: 'Denmark' },
     ];
 
-    var selected_id = 1000;
+    const selected_id = 1000;
 
-    var selected_message = {
+    const selected_message = {
         id: selected_id,
         type: 'stream',
         stream_id: denmark.stream_id,
         topic: 'whatever',
     };
 
-    var messages = [selected_message];
+    const messages = [selected_message];
 
-    var row = {
+    const row = {
         length: 1,
         offset: () => { return {top: 25}; },
     };
@@ -175,7 +177,7 @@ run_test('basics', () => {
         },
     };
 
-    var cont;
+    let cont;
 
     message_fetch.load_messages_for_narrow = (opts) => {
         cont = opts.cont;

@@ -1,6 +1,7 @@
 from typing import Optional, Tuple
 
 import os
+import sys
 from distutils.version import LooseVersion
 from version import PROVISION_VERSION
 from scripts.lib.zulip_tools import get_dev_uuid_var_path
@@ -55,7 +56,8 @@ def get_provisioning_status():
         # their own dependencies and not running provision.
         return True, None
 
-    version = open(version_file).read().strip()
+    with open(version_file, 'r') as f:
+        version = f.read().strip()
 
     # Normal path for people that provision--we're all good!
     if version == PROVISION_VERSION:
@@ -70,3 +72,13 @@ def get_provisioning_status():
             return False, preamble(version) + NEED_TO_DOWNGRADE
 
     return False, preamble(version) + NEED_TO_UPGRADE
+
+
+def assert_provisioning_status_ok(force):
+    # type: (bool) -> None
+    if not force:
+        ok, msg = get_provisioning_status()
+        if not ok:
+            print(msg)
+            print('If you really know what you are doing, use --force to run anyway.')
+            sys.exit(1)

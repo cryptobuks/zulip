@@ -10,8 +10,8 @@ from zerver.lib.soft_deactivation import do_soft_activate_users, \
     do_soft_deactivate_users, do_auto_soft_deactivate_users, logger
 from zerver.models import Realm, UserProfile
 
-def get_users_from_emails(emails: Any,
-                          filter_kwargs: Any) -> List[UserProfile]:
+def get_users_from_emails(emails: List[str],
+                          filter_kwargs: Dict[str, Realm]) -> List[UserProfile]:
     users = UserProfile.objects.filter(
         email__in=emails,
         **filter_kwargs)
@@ -20,7 +20,7 @@ def get_users_from_emails(emails: Any,
         user_emails_found = {user.email for user in users}
         user_emails_not_found = '\n'.join(set(emails) - user_emails_found)
         raise CommandError('Users with the following emails were not found:\n\n%s\n\n'
-                           'Check if they are correct.' % (user_emails_not_found))
+                           'Check if they are correct.' % (user_emails_not_found,))
     return users
 
 class Command(ZulipBaseCommand):
@@ -45,13 +45,13 @@ class Command(ZulipBaseCommand):
         parser.add_argument('users', metavar='<users>', type=str, nargs='*', default=[],
                             help="A list of user emails to soft activate/deactivate.")
 
-    def handle(self, *args: Any, **options: str) -> None:
+    def handle(self, *args: Any, **options: Any) -> None:
         if settings.STAGING:
             print('This is a Staging server. Suppressing management command.')
             sys.exit(0)
 
         realm = self.get_realm(options)
-        user_emails = options['users']  # type: ignore  # mypy thinks this is a str, not List[str] #
+        user_emails = options['users']
         activate = options['activate']
         deactivate = options['deactivate']
 
@@ -63,11 +63,11 @@ class Command(ZulipBaseCommand):
             if not user_emails:
                 print('You need to specify at least one user to use the activate option.')
                 self.print_help("./manage.py", "soft_deactivate_users")
-                sys.exit(1)
+                raise CommandError
 
             users_to_activate = get_users_from_emails(user_emails, filter_kwargs)
             users_activated = do_soft_activate_users(users_to_activate)
-            logger.info('Soft Reactivated %d user(s)' % (len(users_activated)))
+            logger.info('Soft Reactivated %d user(s)' % (len(users_activated),))
 
         elif deactivate:
             if user_emails:
@@ -77,8 +77,8 @@ class Command(ZulipBaseCommand):
             else:
                 users_deactivated = do_auto_soft_deactivate_users(int(options['inactive_for']),
                                                                   realm)
-            logger.info('Soft Deactivated %d user(s)' % (len(users_deactivated)))
+            logger.info('Soft Deactivated %d user(s)' % (len(users_deactivated),))
 
         else:
             self.print_help("./manage.py", "soft_deactivate_users")
-            sys.exit(1)
+            raise CommandError

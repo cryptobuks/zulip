@@ -1,15 +1,9 @@
-var stream_muting = (function () {
-
-var exports = {};
-
-exports.update_in_home_view = function (sub, value) {
-    // value is true if we are in home view
-    // TODO: flip the semantics to be is_muting
-    sub.in_home_view = value;
+exports.update_is_muted = function (sub, value) {
+    sub.is_muted = value;
 
     setTimeout(function () {
-        var msg_offset;
-        var saved_ypos;
+        let msg_offset;
+        let saved_ypos;
         // Save our current scroll position
         if (overlays.is_active()) {
             saved_ypos = message_viewport.scrollTop();
@@ -40,25 +34,18 @@ exports.update_in_home_view = function (sub, value) {
         // In case we added messages to what's visible in the home view, we need to re-scroll to
         // make sure the pointer is still visible. We don't want the auto-scroll handler to move
         // our pointer to the old scroll location before we have a chance to update it.
-        pointer.recenter_pointer_on_display = true;
-        pointer.suppress_scroll_pointer_update = true;
+        pointer.set_recenter_pointer_on_display(true);
+        pointer.set_suppress_scroll_pointer_update(true);
 
         if (!home_msg_list.empty()) {
             message_util.do_unread_count_updates(home_msg_list.all_messages());
         }
     }, 0);
 
-    stream_list.set_in_home_view(sub.stream_id, sub.in_home_view);
+    stream_list.set_in_home_view(sub.stream_id, !sub.is_muted);
 
-    var not_in_home_view_checkbox = $(".subscription_settings[data-stream-id='" + sub.stream_id + "'] #sub_setting_not_in_home_view .sub_setting_control");
-    not_in_home_view_checkbox.prop('checked', !value);
+    const is_muted_checkbox = $(".subscription_settings[data-stream-id='" + sub.stream_id + "'] #sub_is_muted_setting .sub_setting_control");
+    is_muted_checkbox.prop('checked', value);
 };
 
-return exports;
-
-}());
-if (typeof module !== 'undefined') {
-    module.exports = stream_muting;
-}
-
-window.stream_muting = stream_muting;
+window.stream_muting = exports;

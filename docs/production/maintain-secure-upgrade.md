@@ -1,414 +1,17 @@
-# Secure, maintain, and upgrade
+# Maintain, secure, and upgrade
 
 This page covers topics that will help you maintain a healthy, up-to-date, and
 secure Zulip installation, including:
 
-- [Upgrading](#upgrading)
-- [Upgrading from a git repository](#upgrading-from-a-git-repository)
-- [Backups](#backups)
 - [Monitoring](#monitoring)
 - [Scalability](#scalability)
 - [Management commands](#management-commands)
 
 You may also want to read this related content:
 
-- [Security Model](../production/security-model.html)
-
-## Upgrading
-
-**We recommend reading this entire section before doing your first
-upgrade.**
-
-To upgrade to a new version of the zulip server, download the appropriate
-release tarball from <https://www.zulip.org/dist/releases/>.
-
-You also have the option of creating your own release tarballs from a
-copy of the [zulip.git repository](https://github.com/zulip/zulip)
-using `tools/build-release-tarball` or upgrade Zulip
-[to a version in a Git repository directly](#upgrading-from-a-git-repository).
-
-Next, run as root:
-
-```
-/home/zulip/deployments/current/scripts/upgrade-zulip zulip-server-VERSION.tar.gz
-```
-
-The upgrade process will shut down the Zulip service and then run `apt-get upgrade`, a
-puppet apply, any database migrations, and then bring the Zulip service back
-up. Upgrading will result in some brief downtime for the service, which should be
-under 30 seconds unless there is an expensive transition involved. Unless you
-have tested the upgrade in advance, we recommend doing upgrades at off hours.
-
-(Note that there are
-[separate instructions for upgrading Zulip if you're using Docker][docker-upgrade].)
-
-[docker-upgrade]: https://github.com/zulip/docker-zulip#upgrading-the-zulip-container
-
-### Upgrading the distro
-
-Note that upgrading an existing Zulip production server from Ubuntu
-14.04 Trusty to Ubuntu 16.04 Xenial (or 16.04 Xenial to 18.04 Bionic)
-will require significant manual intervention on your part to migrate
-the data in the database from Postgres 9.3 to Postgres 9.5.
-Contributions on testing and documenting this process are welcome!
-
-### Preserving local changes to configuration files
-
-**Warning**: If you have modified configuration files installed by
-Zulip (e.g. the nginx configuration), the Zulip upgrade process will
-overwrite your configuration when it does the `puppet apply`.
-
-You can test whether this will happen assuming no upstream changes to
-the configuration using `scripts/zulip-puppet-apply` (without the
-`-f` option), which will do a test puppet run and output and changes
-it would make. Using this list, you can save a copy of any files
-that you've modified, do the upgrade, and then restore your
-configuration.
-
-If you need to do this, please report the issue so
-that we can make the Zulip puppet configuration flexible enough to
-handle your setup.
-
-### Troubleshooting with the upgrade log
-
-The Zulip upgrade script automatically logs output to
-`/var/log/zulip/upgrade.log`. Please use those logs to include output
-that shows all errors in any bug reports.
-
-After the upgrade, we recommend checking `/var/log/zulip/errors.log`
-to confirm that your users are not experiencing errors after the
-upgrade.
-
-### Rolling back to a prior version
-
-The Zulip upgrade process works by creating a new deployment under
-`/home/zulip/deployments/` containing a complete copy of the Zulip server code,
-and then moving the symlinks at `/home/zulip/deployments/{current,last,next}`
-as part of the upgrade process.
-
-This means that if the new version isn't working,
-you can quickly downgrade to the old version by running
-`/home/zulip/deployments/last/scripts/restart-server`, or to an
-earlier previous version by running
-`/home/zulip/deployments/DATE/scripts/restart-server`.  The
-`restart-server` script stops any running Zulip server, and starts
-the version corresponding to the `restart-server` path you call.
-
-### Updating settings
-
-If required, you can update your settings by editing `/etc/zulip/settings.py`
-and then run `/home/zulip/deployments/current/scripts/restart-server` to
-restart the server.
-
-### Applying system updates
-
-The Zulip upgrade script will automatically run `apt-get update` and
-then `apt-get upgrade`, to make sure you have any new versions of
-dependencies (this will also update system packages).  We assume that
-you will install security updates from `apt` regularly, according to
-your usual security practices for a production server.
-
-If you'd like to minimize downtime when installing a Zulip server
-upgrade, you may want to do an `apt-get upgrade` (and then restart the
-server and check everything is working) before running the Zulip
-upgrade script.
-
-There's one `apt` package to be careful about: upgrading `postgresql`
-while the server is running may result in an outage (basically,
-`postgresql` might stop accepting new queries but refuse to shut down
-while waiting for connections from the Zulip server to shut down).
-While this only happens sometimes, it can be hard to fix for someone
-who isn't comfortable managing a `postgresql` database [1].  You can
-avoid that possibility with the following procedure (run as root):
-
-```
-apt-get update
-supervisorctl stop all
-apt-get upgrade -y
-supervisorctl start all
-```
-
-[1] If this happens to you, just stop the Zulip server, restart
-postgres, and then start the Zulip server again, and you'll be back in
-business.
-
-#### Disabling unattended upgrades
-
-**Important**: We recommend that you
-[disable Ubuntu's unattended-upgrades][disable-unattended-upgrades],
-and instead install apt upgrades manually.  With unattended upgrades
-enabled, the moment a new Postgres release is published, your Zulip
-server will have its postgres server upgraded (and thus restarted).
-
-When one of the services Zulip depends on (postgres, memcached, redis,
-rabbitmq) is restarted, that services will disconnect everything using
-them (like the Zulip server), and every operation that Zulip does
-which uses that service will throw an exception (and send you an error
-report email).  These apparently "random errors" can be confusing and
-might cause you to worry incorrectly about the stability of the Zulip
-software, which in fact the problem is that Ubuntu automatically
-upgraded and then restarted key Zulip dependencies.
-
-Instead, we recommend installing updates for these services manually,
-and then restarting the Zulip server with
-`/home/zulip/deployments/current/scripts/restart-server` afterwards.
-
-[disable-unattended-upgrades]: https://linoxide.com/ubuntu-how-to/enable-disable-unattended-upgrades-ubuntu-16-04/
-
-### API and your Zulip URL
-
-To use the Zulip API with your Zulip server, you will need to use the
-API endpoint of e.g. `https://zulip.example.com/api`.  Our Python
-API example scripts support this via the
-`--site=https://zulip.example.com` argument.  The API bindings
-support it via putting `site=https://zulip.example.com` in your
-.zuliprc.
-
-Every Zulip integration supports this sort of argument (or e.g. a
-`ZULIP_SITE` variable in a zuliprc file or the environment), but this
-is not yet documented for some of the integrations (the included
-integration documentation on `/integrations` will properly document
-how to do this for most integrations).  We welcome pull requests for
-integrations that don't discuss this!
-
-Similarly, you will need to instruct your users to specify the URL
-for your Zulip server when using the Zulip desktop and mobile apps.
-
-### Memory leak mitigation
-
-As a measure to mitigate the impact of potential memory leaks in one
-of the Zulip daemons, the service automatically restarts itself
-every Sunday early morning.  See `/etc/cron.d/restart-zulip` for the
-precise configuration.
-
-## Upgrading from a git repository
-
-Zulip supports upgrading a production installation to any commit in
-Git, which is great for running pre-release versions or maintaining a
-small fork.  If you're using Zulip 1.7 or newer, you can just run the
-command:
-
-```
-# Upgrade to a tagged release
-/home/zulip/deployments/current/scripts/upgrade-zulip-from-git 1.8.1
-# Upgrade to a branch or other Git ref
-/home/zulip/deployments/current/scripts/upgrade-zulip-from-git master
-```
-
-and Zulip will automatically fetch the relevant Git commit and upgrade
-to the that version of Zulip.
-
-By default, this uses the main upstream Zulip server repository
-(example below), but you can configure any other Git repository by
-adding a section like this to `/etc/zulip/zulip.conf`:
-
-```
-[deployment]
-git_repo_url = https://github.com/zulip/zulip.git
-```
-
-**Systems with limited RAM**: If you are running a minimal Zulip
-  server with 2GB of RAM or less, the upgrade can fail due to the
-  system running out of RAM running both the Zulip server and Zulip's
-  static asset build process (`tools/minify-js`, which calls
-  `webpack`, is usually the step that fails).  If you encounter this,
-  you can run `supervisorctl stop all` to shut down the Zulip server
-  while you run the upgrade (this will, of course, add some downtime,
-  which is part of we already recommend more RAM for organizations of
-  more than a few people).
-
-### Upgrading using Git from Zulip 1.6 and older
-
-If you're are upgrading from a Git repository, and you currently have
-Zulip 1.6 or older installed, you will need to install the
-dependencies for building Zulip's static assets.  To do this, add
-`zulip::static_asset_compiler` to your `/etc/zulip/zulip.conf` file's
-`puppet_classes` entry, like this:
-
-```
-puppet_classes = zulip::voyager, zulip::static_asset_compiler
-```
-
-and run `scripts/zulip-puppet-apply`.  After approving the changes,
-you'll be able to use `upgrade-zulip-from-git`.
-
-After you've upgraded to Zulip 1.7 or above, you can safely remove
-`zulip::static_asset_compiler` from `puppet_classes`; in Zulip 1.7 and
-above, it is a dependency of `zulip::voyager` and thus these
-dependencies are installed by default.
-
-## Backups
-
-Starting with Zulip 2.0, Zulip has a built-in backup tool:
-
-```
-# As the zulip user
-/home/zulip/deployments/current/manage.py backup
-# Or as root
-su zulip -c '/home/zulip/deployments/current/manage.py backup'
-```
-
-This will generate a `.tar.gz` archive containing all the data stored
-on your Zulip server that would be needed to restore your Zulip
-server's state on another machine perfectly.
-
-### Restoring backups
-
-Backups generated using the Zulip 2.0 backup tool can be restored as
-follows.
-
-First, [install a new Zulip server through Step 3][install-server]
-with the version of both the base OS and Zulip from your previous
-installation.  Then, run as root:
-
-```
-/home/zulip/deployments/current/scripts/setup/restore-backup /path/to/backup
-```
-
-If you're not sure what versions were in use when a given backup was
-created, you can get that information via the files in the backup
-tarball `postgres-version`, `os-version`, and `zulip-version`.  The
-following command may be useful for viewing these files without
-extracting the entire archive.
-
-```
-tar -Oaxf /path/to/archive/zulip-backup-rest.tar.gz zulip-backup/zulip-version
-```
-
-[install-server]: ../production/install.html
-
-### What is included
-
-Zulip's backup tools includes everything you need to fully restore
-your Zulip server from a user perspective.
-
-The following data present on a Zulip server is not included in these
-backup archives, and you may want to backup separately:
-
-* Transient data present in Zulip's RabbitMQ queues.  For example, a
-  record that a missed-message email for a given Zulip message is
-  scheduled to be sent to a given user in 2 minutes if the recipient
-  user doesn't interact with Zulip during that time window.  You can
-  check their status using `rabbitmq list_queues` as root.
-
-* Certain highly transient state that Zulip doesn't store in a
-  database, such as typing status, API rate-limiting counters,
-  etc. that would have no value 1 minute after the backup is
-  completed.
-
-* The server access/error logs from `/var/log/zulip`, because a Zulip
-  server only appends to those log files (i.e. they aren't necessarily
-  to precisely restore your Zulip data), and they can be very large
-  compared to the rest of the data for a Zulip server.
-
-* Files uploaded with the Zulip
-  [S3 file upload backend](../production/upload-backends.html).  We
-  don't include these for two reasons. First, the uploaded file data
-  in S3 can easily be many times larger than the rest of the backup,
-  and downloading it all to a server doing a backup could easily
-  exceed its disk capacity.  Additionally, S3 is a reliable persistent
-  storage system with its own high-quality tools for doing backups.
-  Contributions of (documentation on) ready-to-use scripting for S3
-  backups are welcome.
-
-* SSL certificates.  Since these are security-sensitive and either
-  trivially replaced (if generated via Certbot) or provided by the
-  system administrator, we do not include them in these backups.
-
-### Backup details
-
-This section is primarily for users managing backups themselves
-(E.g. if they're using a remote postgres database with an existing
-backup strategy), and also serves as documentation for what is
-included in the backups generated by Zulip's standard tools.  That
-data includes:
-
-* The postgres database.  That you can back up like any postgres
-database; we have some example tooling for doing that incrementally
-into S3 using [wal-e](https://github.com/wal-e/wal-e) in
-`puppet/zulip_ops/manifests/postgres_common.pp` (that's what we
-use for zulip.com's database backups).  Note that this module isn't
-part of the Zulip server releases since it's part of the zulip.com
-configuration (see <https://github.com/zulip/zulip/issues/293>
-for a ticket about fixing this to make life easier for running
-backups).
-
-* Any user-uploaded files.  If you're using S3 as storage for file
-uploads, this is backed up in S3, but if you have instead set
-`LOCAL_UPLOADS_DIR`, any files uploaded by users (including avatars)
-will be stored in that directory and you'll want to back it up.
-
-* Your Zulip configuration including secrets from `/etc/zulip/`.
-E.g. if you lose the value of `secret_key`, all users will need to
-login again when you setup a replacement server since you won't be
-able to verify their cookies; if you lose `avatar_salt`, any
-user-uploaded avatars will need to be re-uploaded (since avatar
-filenames are computed using a hash of `avatar_salt` and user's
-email), etc.
-
-Zulip also has a logical [data export and import tool][export-import],
-which is useful for migrating data between Zulip Cloud and other Zulip
-servers, as well as various auditing purposes.  The big advantage of
-the `manage.py backup` system over the export/import process is that
-it's structurally very unlikely for the `postgres` process to ever
-develop bugs, whereas the import/export tool requires some work for
-every new feature we add to Zulip, and thus may occasionally have bugs
-aroun corner cases.  The export tool's advantage is that the export is
-more human-readable and easier to parse, and doesn't have the
-requirement that the same set of Zulip organizations exist on the two
-servers (which is critical for migrations to and from Zulip Cloud).
-
-[export-import]: ../production/export-and-import.html
-
-### Restore from manual backups
-
-To restore from a manual backup, the process is basically the reverse of the above:
-
-* Install new server as normal by downloading a Zulip release tarball
-  and then using `scripts/setup/install`, you don't need
-  to run the `initialize-database` second stage which puts default
-  data into the database.
-
-* Unpack to `/etc/zulip` the `settings.py` and `zulip-secrets.conf` files
-  from your backups.
-
-* Restore your database from the backup using `wal-e`; if you ran
-  `initialize-database` anyway above, you'll want to first
-  `scripts/setup/postgres-init-db` to drop the initial database first.
-
-* Reconfigure rabbitmq to use the password from `secrets.conf`
-  by running, as root, `scripts/setup/configure-rabbitmq`.
-
-* If you're using local file uploads, restore those files to the path
-  specified by `settings.LOCAL_UPLOADS_DIR` and (if appropriate) any
-  logs.
-
-* Start the server using `scripts/restart-server`.
-
-This restoration process can also be used to migrate a Zulip
-installation from one server to another.
-
-We recommend running a disaster recovery after you setup backups to
-confirm that your backups are working; you may also want to monitor
-that they are up to date using the Nagios plugin at:
-`puppet/zulip_ops/files/nagios_plugins/check_postgres_backup`.
-
-Contributions to more fully automate this process or make this section
-of the guide much more explicit and detailed are very welcome!
-
-
-### Postgres streaming replication
-
-Zulip has database configuration for using Postgres streaming
-replication; you can see the configuration in these files:
-
-* `puppet/zulip_ops/manifests/postgres_slave.pp`
-* `puppet/zulip_ops/manifests/postgres_master.pp`
-* `puppet/zulip_ops/files/postgresql/*`
-
-Contribution of a step-by-step guide for setting this up (and moving
-this configuration to be available in the main `puppet/zulip/` tree)
-would be very welcome!
+- [Security Model](../production/security-model.md)
+- [Backups, export and import](../production/export-and-import.md)
+- [Upgrade or modify Zulip](../production/upgrade-or-modify.md)
 
 ## Monitoring
 
@@ -473,16 +76,16 @@ running Zulip with larger teams (especially >1000 users).
 * For an organization with 100+ users, it's important to have more
   than 4GB of RAM on the system.  Zulip will install on a system with
   2GB of RAM, but with less than 3.5GB of RAM, it will run its
-  [queue processors](../subsystems/queuing.html) multithreaded to conserve memory;
+  [queue processors](../subsystems/queuing.md) multithreaded to conserve memory;
   this creates a significant performance bottleneck.
 
-* [chat.zulip.org](../contributing/chat-zulip-org.html), with thousands of user
+* [chat.zulip.org](../contributing/chat-zulip-org.md), with thousands of user
   accounts and thousands of messages sent every week, has 8GB of RAM,
   4 cores, and 80GB of disk.  The CPUs are essentially always idle,
   but the 8GB of RAM is important.
 
 * We recommend using a [remote postgres
-  database](postgres.html) for isolation, though it is
+  database](postgres.md) for isolation, though it is
   not required.  In the following, we discuss a relatively simple
   configuration with two types of servers: application servers
   (running Django, Tornado, RabbitMQ, Redis, Memcached, etc.) and
@@ -538,10 +141,54 @@ running Zulip with larger teams (especially >1000 users).
 Questions, concerns, and bug reports about this area of Zulip are very
 welcome!  This is an area we are hoping to improve.
 
-## Securing your Zulip server
+## Sections that have moved
 
-Zulip's security model is discussed in
-[a separate document](../production/security-model.html).
+These were once subsections of this page, but have since moved to
+dedicated pages; we preserve them here to avoid breaking old links.
+
+### Securing your Zulip server
+
+Moved to [Security Model](../production/security-model.md).
+
+### Upgrading
+
+Moved to [Upgrading to a release](../production/upgrade-or-modify.html#upgrading-to-a-release).
+
+### Upgrading from a Git repository
+
+Moved to [Upgrading from a Git
+repository](../production/upgrade-or-modify.html#upgrading-from-a-git-repository).
+
+### Upgrading the operating system
+
+Moved to [Upgrading the operating
+system](../production/upgrade-or-modify.html#upgrading-the-operating-system).
+
+## API and your Zulip URL
+
+To use the Zulip API with your Zulip server, you will need to use the
+API endpoint of e.g. `https://zulip.example.com/api`.  Our Python
+API example scripts support this via the
+`--site=https://zulip.example.com` argument.  The API bindings
+support it via putting `site=https://zulip.example.com` in your
+.zuliprc.
+
+Every Zulip integration supports this sort of argument (or e.g. a
+`ZULIP_SITE` variable in a zuliprc file or the environment), but this
+is not yet documented for some of the integrations (the included
+integration documentation on `/integrations` will properly document
+how to do this for most integrations).  We welcome pull requests for
+integrations that don't discuss this!
+
+Similarly, you will need to instruct your users to specify the URL
+for your Zulip server when using the Zulip desktop and mobile apps.
+
+## Memory leak mitigation
+
+As a measure to mitigate the impact of potential memory leaks in one
+of the Zulip daemons, the service automatically restarts itself
+every Sunday early morning.  See `/etc/cron.d/restart-zulip` for the
+precise configuration.
 
 ## Management commands
 
@@ -570,16 +217,16 @@ You can see all the organizations on your Zulip server using
 zulip@zulip:~$ /home/zulip/deployments/current/manage.py list_realms
 id    string_id                                name
 --    ---------                                ----
-1     zulip                                    None
+1     zulipinternal                            None
 2                                              Zulip Community
 ```
 
-(Note that every Zulip server has a special `zulip` realm containing
+(Note that every Zulip server has a special `zulipinternal` realm containing
 system-internal bots like `welcome-bot`; you are unlikely to need to
 interact with that realm.)
 
 Unless you are
-[hosting multiple organizations on your Zulip server](../production/multiple-organizations.html),
+[hosting multiple organizations on your Zulip server](../production/multiple-organizations.md),
 your single Zulip organization on the root domain will have the empty
 string (`''`) as its `string_id`.  So you can run e.g.:
 ```
@@ -653,4 +300,4 @@ There are a large number of useful management commands under
 
 ## Hosting multiple Zulip organizations
 
-This is explained in detail on [its own page](../production/multiple-organizations.html).
+This is explained in detail on [its own page](../production/multiple-organizations.md).

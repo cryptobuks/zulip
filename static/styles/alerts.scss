@@ -1,18 +1,43 @@
+$alert-red: hsl(16, 60%, 45%);
+$alert-error-red: hsl(0, 80%, 40%);
+
+.alert-display {
+    display: none;
+
+    &.show {
+        display: block;
+    }
+}
+
+.alert-animations {
+    &.show {
+        animation-name: fadeIn;
+        animation-duration: 0.3s;
+        animation-fill-mode: forwards;
+    }
+
+    &.fade-out {
+        animation-name: fadeOut;
+        animation-duration: 0.3s;
+        animation-fill-mode: forwards;
+    }
+
+    .faded {
+        opacity: 0.7;
+    }
+}
+
 /* general alert styling changes */
 .alert {
-    display: none;
-}
+    @extend .alert-display;
 
-.alert.show {
-    display: block;
-}
+    &#organization-status {
+        margin: 20px;
+    }
 
-.alert#organization-status {
-    margin: 20px;
-}
-
-.alert.stream_create_info {
-    margin: 10px 10px 0px 10px;
+    &.stream_create_info {
+        margin: 10px 10px 0px 10px;
+    }
 }
 
 /* alert box component changes */
@@ -23,86 +48,163 @@
     width: 900px;
     margin-left: calc(50% - 450px);
     z-index: 220;
-}
+    max-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 
-.alert-box .alert.show {
-    animation-name: fadeIn;
-    animation-duration: 0.3s;
-    animation-fill-mode: forwards;
-}
+    .stacktrace {
+        @extend .alert-display;
+    }
+    .stacktrace {
+        @extend .alert-animations;
 
-.alert-box .alert.fade-out {
-    animation-name: fadeOut;
-    animation-duration: 0.3s;
-    animation-fill-mode: forwards;
-}
+        font-size: 1rem;
+        color: hsl(0, 80%, 40%);
 
-.alert-box .alert {
-    font-size: 1rem;
-    border-radius: 4px;
-    background-color: hsl(0, 0%, 100%);
-}
+        margin-top: 5px;
+        padding: 1rem 0;
 
-.alert-box .alert .faded {
-    opacity: 0.7;
-}
+        background-color: hsl(0, 100%, 98%);
+        border-radius: 4px;
+        border: 1px solid hsl(0, 80%, 40%);
+        box-shadow: 0 0 2px hsl(0, 80%, 40%);
 
-.alert-box .alert::before {
-    position: absolute;
-    top: 10px;
-    left: 12px;
+        .stacktrace-header {
+            display: flex;
+            justify-content: space-between;
 
-    font-family: "FontAwesome";
-    font-size: 1.3em;
-    content: "\f071";
+            .message {
+                flex: 1 1 auto;
+            }
 
-    color: hsl(16, 60%, 55%);
-}
+            .warning-symbol,
+            .exit {
+                flex: 0 0 auto;
+                font-size: 1.3rem;
+                padding: 0 1rem;
+            }
 
-.alert-box .alert.alert-error::before {
-    color: hsl(0, 80%, 40%);
-}
+            .exit::after {
+                cursor: pointer;
+                font-size: 2.3rem;
+                content: "\d7";
+            }
+        }
 
-.alert-box .alert {
-    position: relative;
+        .stacktrace-content {
+            font-family: monospace;
+            font-size: 0.85rem;
 
-    /* gives room for the error icon. */
-    padding-left: 50px;
-    padding-top: 10px;
-    padding-bottom: 10px;
+            margin-top: 1rem;
 
-    text-shadow: none;
+            .stackframe {
+                padding-left: calc(3.3rem - 14px);
+                padding-right: 1rem;
+            }
+        }
 
-    color: hsl(16, 60%, 45%);
-    border: 1px solid hsl(16, 60%, 45%);
-    box-shadow: 0 0 2px hsl(16, 60%, 45%);
-}
+        .expand {
+            cursor: pointer;
+            color: hsl(0, 32%, 83%);
 
-.alert-box .alert.alert-error {
-    color: hsl(0, 80%, 40%);
-    border: 1px solid hsl(0, 80%, 40%);
-    box-shadow: 0 0 2px hsl(0, 80%, 40%);
-}
+            &:hover {
+                color: hsl(0, 0%, 20%);
+            }
+        }
 
-.alert-box .alert .exit {
-    position: absolute;
-    top: 10px;
-    right: 0px;
+        .subtle {
+            color: hsl(0, 7%, 45%);
+        }
 
-    font-size: 2.5em;
-    font-weight: 300;
+        .code-context {
+            color: hsl(0, 7%, 15%);
+            background-color: hsl(0, 7%, 98%);
+            background-color: hsl(0, 7%, 98%);
+            box-shadow:
+                inset 0px 11px 10px -10px hsl(0, 7%, 70%),
+                inset 0px -11px 10px -10px hsl(0, 7%, 70%);
 
-    cursor: pointer;
-}
+            margin-top: 1em;
+            margin-bottom: 1em;
 
-.alert-box .alert .exit::after {
-    padding: 10px;
-    content: "\d7";
-}
+            .code-context-content {
+                padding: 1rem 0;
+                white-space: pre;
+                overflow-x: auto;
+            }
 
-.alert-box .browser-alert .error::before {
-    content: "Browser Error: ";
-    font-weight: 600;
+            .line-number {
+                width: 3rem;
+                display: inline-block;
+                text-align: right;
+                color: hsl(0, 7%, 35%);
+            }
+
+            .focus-line {
+                background-color: hsl(0, 7%, 90%);
+                width: 100%;
+            }
+        }
+    }
+
+    .alert {
+        @extend .alert-animations;
+
+        font-size: 1rem;
+        border-radius: 4px;
+        background-color: hsl(0, 0%, 100%);
+
+        position: relative;
+
+        /* gives room for the error icon. */
+        padding-left: 50px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+
+        text-shadow: none;
+
+        color: $alert-red;
+        border: 1px solid $alert-red;
+        box-shadow: 0 0 2px $alert-red;
+
+        &::before {
+            position: absolute;
+            top: 10px;
+            left: 12px;
+
+            font-family: "FontAwesome";
+            font-size: 1.3em;
+            content: "\f071";
+
+            color: hsl(16, 60%, 55%);
+        }
+
+        &.alert-error {
+            color: $alert-error-red;
+            border: 1px solid $alert-error-red;
+            box-shadow: 0 0 2px $alert-error-red;
+
+            &::before {
+                color: $alert-error-red;
+            }
+        }
+
+        .exit {
+            position: absolute;
+            top: 10px;
+            right: 0px;
+
+            font-size: 2.5em;
+            font-weight: 300;
+
+            cursor: pointer;
+
+            &::after {
+                padding: 10px;
+                content: "\d7";
+            }
+        }
+    }
 }
 
 /* animation section */

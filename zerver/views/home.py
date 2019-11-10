@@ -22,7 +22,6 @@ from zerver.lib.actions import do_change_tos_version, \
 from zerver.lib.avatar import avatar_url
 from zerver.lib.i18n import get_language_list, get_language_name, \
     get_language_list_for_templates, get_language_translation_data
-from zerver.lib.json_encoder_for_html import JSONEncoderForHTML
 from zerver.lib.push_notifications import num_push_devices_for_user
 from zerver.lib.streams import access_stream_by_name
 from zerver.lib.subdomains import get_subdomain
@@ -31,7 +30,6 @@ from two_factor.utils import default_device
 
 import calendar
 import logging
-import os
 import time
 
 @zulip_login_required
@@ -61,7 +59,7 @@ def sent_time_in_epoch_seconds(user_message: Optional[UserMessage]) -> Optional[
         return None
     # We have USE_TZ = True, so our datetime objects are timezone-aware.
     # Return the epoch seconds in UTC.
-    return calendar.timegm(user_message.message.pub_date.utctimetuple())
+    return calendar.timegm(user_message.message.date_sent.utctimetuple())
 
 def get_bot_types(user_profile: UserProfile) -> List[Dict[str, object]]:
     bot_types = []
@@ -81,11 +79,6 @@ def compute_navbar_logo_url(page_params: Dict[str, Any]) -> str:
     return navbar_logo_url
 
 def home(request: HttpRequest) -> HttpResponse:
-    if (settings.DEVELOPMENT and not settings.TEST_SUITE and
-            os.path.exists('var/handlebars-templates/compile.error')):
-        response = render(request, 'zerver/handlebars_compilation_failed.html')
-        response.status_code = 500
-        return response
     if not settings.ROOT_DOMAIN_LANDING_PAGE:
         return home_real(request)
 
@@ -129,6 +122,7 @@ def home_real(request: HttpRequest) -> HttpResponse:
 
     register_ret = do_events_register(user_profile, request.client,
                                       apply_markdown=True, client_gravatar=True,
+                                      notification_settings_null=True,
                                       narrow=narrow)
     user_has_messages = (register_ret['max_message_id'] != -1)
 
@@ -191,7 +185,7 @@ def home_real(request: HttpRequest) -> HttpResponse:
         poll_timeout          = settings.POLL_TIMEOUT,
         login_page            = settings.HOME_NOT_LOGGED_IN,
         root_domain_uri       = settings.ROOT_DOMAIN_URI,
-        maxfilesize           = settings.MAX_FILE_UPLOAD_SIZE,
+        max_file_upload_size  = settings.MAX_FILE_UPLOAD_SIZE,
         max_avatar_file_size  = settings.MAX_AVATAR_FILE_SIZE,
         server_generation     = settings.SERVER_GENERATION,
         use_websockets        = settings.USE_WEBSOCKETS,
@@ -203,6 +197,8 @@ def home_real(request: HttpRequest) -> HttpResponse:
         password_min_guesses  = settings.PASSWORD_MIN_GUESSES,
         jitsi_server_url      = settings.JITSI_SERVER_URL,
         search_pills_enabled  = settings.SEARCH_PILLS_ENABLED,
+        server_avatar_changes_disabled = settings.AVATAR_CHANGES_DISABLED,
+        server_name_changes_disabled = settings.NAME_CHANGES_DISABLED,
 
         # Misc. extra data.
         have_initial_messages = user_has_messages,
@@ -246,12 +242,14 @@ def home_real(request: HttpRequest) -> HttpResponse:
 
     statsd.incr('views.home')
     show_invites = True
+    show_add_streams = True
 
     # Some realms only allow admins to invite users
     if user_profile.realm.invite_by_admins_only and not user_profile.is_realm_admin:
         show_invites = False
     if user_profile.is_guest:
         show_invites = False
+        show_add_streams = False
 
     show_billing = False
     show_plans = False
@@ -284,14 +282,14 @@ def home_real(request: HttpRequest) -> HttpResponse:
     response = render(request, 'zerver/app/index.html',
                       context={'user_profile': user_profile,
                                'emojiset': emojiset,
-                               'page_params': JSONEncoderForHTML().encode(page_params),
+                               'page_params': page_params,
                                'csp_nonce': csp_nonce,
                                'avatar_url': avatar_url(user_profile),
                                'show_debug':
                                settings.DEBUG and ('show_debug' in request.GET),
-                               'pipeline': settings.PIPELINE_ENABLED,
                                'search_pills_enabled': settings.SEARCH_PILLS_ENABLED,
                                'show_invites': show_invites,
+                               'show_add_streams': show_add_streams,
                                'show_billing': show_billing,
                                'show_plans': show_plans,
                                'is_admin': user_profile.is_realm_admin,
@@ -302,6 +300,7 @@ def home_real(request: HttpRequest) -> HttpResponse:
                                'enable_feedback': settings.ENABLE_FEEDBACK,
                                'embedded': narrow_stream is not None,
                                'invite_as': PreregistrationUser.INVITE_AS,
+                               'max_file_upload_size': settings.MAX_FILE_UPLOAD_SIZE,
                                },)
     patch_cache_control(response, no_cache=True, no_store=True, must_revalidate=True)
     return response
@@ -320,7 +319,7 @@ def plans_view(request: HttpRequest) -> HttpResponse:
     realm_plan_type = 0
     if realm is not None:
         realm_plan_type = realm.plan_type
-        if realm.plan_type == Realm.SELF_HOSTED:
+        if realm.plan_type == Realm.SELF_HOSTED and settings.PRODUCTION:
             return HttpResponseRedirect('https://zulipchat.com/plans')
         if not request.user.is_authenticated():
             return redirect_to_login(next="plans")

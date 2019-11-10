@@ -1,13 +1,9 @@
-var scroll_util = (function () {
-
-var exports = {};
-
 exports.scroll_delta = function (opts) {
-    var elem_top = opts.elem_top;
-    var container_height = opts.container_height;
-    var elem_bottom = opts.elem_bottom;
+    const elem_top = opts.elem_top;
+    const container_height = opts.container_height;
+    const elem_bottom = opts.elem_bottom;
 
-    var delta = 0;
+    let delta = 0;
 
     if (elem_top < 0) {
         delta = Math.max(
@@ -34,16 +30,17 @@ exports.scroll_element_into_container = function (elem, container) {
     // this will be non-intrusive to users when they already have
     // the element visible.
 
-    var elem_top = elem.position().top;
-    var elem_bottom = elem_top + elem.innerHeight();
+    container = ui.get_scroll_element(container);
+    const elem_top = elem.position().top;
+    const elem_bottom = elem_top + elem.innerHeight();
 
-    var opts = {
+    const opts = {
         elem_top: elem_top,
         elem_bottom: elem_bottom,
         container_height: container.height(),
     };
 
-    var delta = exports.scroll_delta(opts);
+    const delta = exports.scroll_delta(opts);
 
     if (delta === 0) {
         return;
@@ -52,9 +49,4 @@ exports.scroll_element_into_container = function (elem, container) {
     container.scrollTop(container.scrollTop() + delta);
 };
 
-return exports;
-}());
-if (typeof module !== 'undefined') {
-    module.exports = scroll_util;
-}
-window.scroll_util = scroll_util;
+window.scroll_util = exports;

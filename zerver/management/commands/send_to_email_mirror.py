@@ -1,4 +1,3 @@
-
 import os
 import email
 import ujson
@@ -11,11 +10,11 @@ from django.core.management.base import CommandParser
 
 from zerver.lib.email_mirror import mirror_email_message
 from zerver.lib.email_mirror_helpers import encode_email_address
-from zerver.lib.management import ZulipBaseCommand
+from zerver.lib.management import ZulipBaseCommand, CommandError
 
 from zerver.models import Realm, get_stream, get_realm
 
-from typing import Dict
+from typing import Dict, Optional
 
 # This command loads an email from a specified file and sends it
 # to the email mirror. Simple emails can be passed in a JSON file,
@@ -54,10 +53,10 @@ Example:
 
         self.add_realm_args(parser, help="Specify which realm to connect to; default is zulip")
 
-    def handle(self, **options: str) -> None:
+    def handle(self, **options: Optional[str]) -> None:
         if options['fixture'] is None:
             self.print_help('./manage.py', 'send_to_email_mirror')
-            exit(1)
+            raise CommandError
 
         if options['stream'] is None:
             stream = "Denmark"
@@ -93,8 +92,7 @@ Example:
 
     def _parse_email_fixture(self, fixture_path: str) -> Message:
         if not self._does_fixture_path_exist(fixture_path):
-            print('Fixture {} does not exist'.format(fixture_path))
-            exit(1)
+            raise CommandError('Fixture {} does not exist'.format(fixture_path))
 
         if fixture_path.endswith('.json'):
             message = self._parse_email_json_fixture(fixture_path)

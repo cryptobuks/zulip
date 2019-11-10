@@ -1,36 +1,23 @@
 # Get user groups
 
+{!api-members-only.md!}
+
 Fetches all of the user groups in the organization.
 
 `GET {{ api_url }}/v1/user_groups`
 
 ## Usage examples
 
-<div class="code-section" markdown="1">
-<ul class="nav">
-<li data-language="python">Python</li>
-<li data-language="curl">curl</li>
-</ul>
-<div class="blocks">
-
-<div data-language="curl" markdown="1">
-
-```
-curl {{ api_url }}/v1/user_groups \
-    -u BOT_EMAIL_ADDRESS:BOT_API_KEY
-```
-
-</div>
-
-<div data-language="python" markdown="1">
+{start_tabs}
+{tab|python}
 
 {generate_code_example(python)|/user_groups:get|example}
 
-</div>
+{tab|curl}
 
-</div>
+{generate_code_example(curl)|/user_groups:get|example}
 
-</div>
+{end_tabs}
 
 ## Arguments
 

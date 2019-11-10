@@ -1,8 +1,14 @@
-var confirmDatePlugin = require("node_modules/flatpickr/dist/plugins/confirmDate/confirmDate.js");
-
-var popovers = (function () {
-
-var exports = {};
+var confirmDatePlugin = require("flatpickr/dist/plugins/confirmDate/confirmDate.js");
+var render_actions_popover_content = require('../templates/actions_popover_content.hbs');
+var render_mobile_message_buttons_popover = require('../templates/mobile_message_buttons_popover.hbs');
+var render_mobile_message_buttons_popover_content = require('../templates/mobile_message_buttons_popover_content.hbs');
+var render_no_arrow_popover = require('../templates/no_arrow_popover.hbs');
+var render_remind_me_popover_content = require('../templates/remind_me_popover_content.hbs');
+var render_user_group_info_popover = require('../templates/user_group_info_popover.hbs');
+var render_user_group_info_popover_content = require('../templates/user_group_info_popover_content.hbs');
+var render_user_info_popover_content = require('../templates/user_info_popover_content.hbs');
+var render_user_info_popover_title = require('../templates/user_info_popover_title.hbs');
+var render_user_profile_modal = require("../templates/user_profile_modal.hbs");
 
 var current_actions_popover_elem;
 var current_flatpickr_instance;
@@ -90,6 +96,60 @@ function calculate_info_popover_placement(size, elt) {
     }
 }
 
+function get_custom_profile_field_data(user, field, field_types, dateFormat) {
+    var field_value = people.get_custom_profile_data(user.user_id, field.id);
+    var field_type = field.type;
+    var profile_field = {};
+
+    if (!field_value) {
+        return profile_field;
+    }
+    if (!field_value.value) {
+        return profile_field;
+    }
+    profile_field.name = field.name;
+    profile_field.is_user_field = false;
+    profile_field.is_link = field_type === field_types.URL.id;
+    profile_field.is_external_account = field_type === field_types.EXTERNAL_ACCOUNT.id;
+    profile_field.type = field_type;
+
+    switch (field_type) {
+    case field_types.DATE.id:
+        profile_field.value = moment(field_value.value).format(dateFormat);
+        break;
+    case field_types.USER.id:
+        profile_field.id = field.id;
+        profile_field.is_user_field = true;
+        profile_field.value = field_value.value;
+        break;
+    case field_types.CHOICE.id: {
+        var field_choice_dict = JSON.parse(field.field_data);
+        profile_field.value = field_choice_dict[field_value.value].text;
+        break;
+    }
+    case field_types.SHORT_TEXT.id:
+    case field_types.LONG_TEXT.id:
+        profile_field.value = field_value.value;
+        profile_field.rendered_value = field_value.rendered_value;
+        break;
+    case field_types.EXTERNAL_ACCOUNT.id:
+        profile_field.value = field_value.value;
+        profile_field.field_data = JSON.parse(field.field_data);
+        profile_field.link = settings_profile_fields.get_external_account_link(profile_field);
+        break;
+    default:
+        profile_field.value = field_value.value;
+    }
+    return profile_field;
+}
+
+function get_visible_email(user) {
+    if (user.delivery_email) {
+        return user.delivery_email;
+    }
+    return user.email;
+}
+
 function render_user_info_popover(user, popover_element, is_sender_popover, private_msg_class,
                                   template_class, popover_placement) {
     var is_me = people.is_my_user_id(user.user_id);
@@ -116,8 +176,9 @@ function render_user_info_popover(user, popover_element, is_sender_popover, priv
         user_circle_class: buddy_data.get_user_circle_class(user.user_id),
         private_message_class: private_msg_class,
         sent_by_uri: hash_util.by_sender_uri(user.email),
+        show_email: settings_org.show_email(),
         show_user_profile: !(user.is_bot || page_params.custom_profile_fields.length === 0),
-        user_email: user.email,
+        user_email: get_visible_email(user),
         user_full_name: user.full_name,
         user_id: user.user_id,
         user_last_seen_time_status: buddy_data.user_last_seen_time_status(user.user_id),
@@ -126,17 +187,30 @@ function render_user_info_popover(user, popover_element, is_sender_popover, priv
         status_text: user_status.get_status_text(user.user_id),
     };
 
+    if (user.is_bot) {
+        var is_cross_realm_bot = user.is_cross_realm_bot;
+        var bot_owner_id = user.bot_owner_id;
+        if (is_cross_realm_bot) {
+            args.is_cross_realm_bot = is_cross_realm_bot;
+        } else if (bot_owner_id) {
+            var bot_owner = people.get_person_from_user_id(bot_owner_id);
+            args.bot_owner = bot_owner;
+        }
+    }
+
     popover_element.popover({
-        content: templates.render('user_info_popover_content', args),
+        content: render_user_info_popover_content(args),
         // TODO: Determine whether `fixed` should be applied
         // unconditionally.  Right now, we only do it for the user
         // sidebar version of the popover.
         fixed: template_class === 'user_popover',
         placement: popover_placement,
-        template: templates.render('no_arrow_popover', {class: template_class}),
-        title: templates.render('user_info_popover_title',
-                                {user_avatar: "avatar/" + user.email,
-                                 user_is_guest: user.is_guest}),
+        template: render_no_arrow_popover({class: template_class}),
+        title: render_user_info_popover_title({
+            user_avatar: "avatar/" + user.email,
+            user_is_guest: user.is_guest,
+        }),
+        html: true,
         trigger: "manual",
         top_offset: 100,
         fix_positions: true,
@@ -155,7 +229,7 @@ exports._test_calculate_info_popover_placement = calculate_info_popover_placemen
 // message is the message containing it, which should be selected
 function show_user_info_popover(element, user, message) {
     var last_popover_elem = current_message_info_popover_elem;
-    popovers.hide_all();
+    exports.hide_all();
     if (last_popover_elem !== undefined
         && last_popover_elem.get()[0] === element) {
         // We want it to be the case that a user can dismiss a popover
@@ -182,7 +256,7 @@ function show_user_info_popover(element, user, message) {
 
 function show_mobile_message_buttons_popover(element) {
     var last_popover_elem = current_mobile_message_buttons_popover_elem;
-    popovers.hide_all();
+    exports.hide_all();
     if (last_popover_elem !== undefined
         && last_popover_elem.get()[0] === element) {
         // We want it to be the case that a user can dismiss a popover
@@ -193,10 +267,11 @@ function show_mobile_message_buttons_popover(element) {
     var $element = $(element);
     $element.popover({
         placement: "left",
-        template: templates.render('mobile_message_buttons_popover'),
-        content: templates.render('mobile_message_buttons_popover_content', {
+        template: render_mobile_message_buttons_popover(),
+        content: render_mobile_message_buttons_popover_content({
             is_in_private_narrow: narrow_state.narrowed_to_pms(),
         }),
+        html: true,
         trigger: "manual",
     });
     $element.popover("show");
@@ -216,70 +291,32 @@ exports.hide_user_profile = function () {
 };
 
 exports.show_user_profile = function (user) {
-    popovers.hide_all();
+    exports.hide_all();
 
-    var profile_data = [];
-    var localFormat = moment.localeData().longDateFormat('LL');
+    var dateFormat = moment.localeData().longDateFormat('LL');
     var field_types = page_params.custom_profile_field_types;
-
-    page_params.custom_profile_fields.forEach(function (field) {
-        var field_value = people.get_custom_profile_data(user.user_id, field.id);
-        var field_type = field.type;
-        var profile_field = {};
-
-        profile_field.name = field.name;
-        profile_field.is_user_field = false;
-        profile_field.is_link = field_type === field_types.URL.id;
-        profile_field.type = field_type;
-
-        if (!field_value) {
-            return;
-        }
-        if (!field_value.value) {
-            return;
-        }
-        switch (field_type) {
-        case field_types.DATE.id:
-            profile_field.value = moment(field_value.value).format(localFormat);
-            break;
-        case field_types.USER.id:
-            profile_field.id = field.id;
-            profile_field.is_user_field = true;
-            profile_field.value = field_value.value;
-            break;
-        case field_types.CHOICE.id:
-            var field_choice_dict = JSON.parse(field.field_data);
-            profile_field.value = field_choice_dict[field_value.value].text;
-            break;
-        case field_types.SHORT_TEXT.id:
-        case field_types.LONG_TEXT.id:
-            profile_field.value = field_value.value;
-            profile_field.rendered_value = field_value.rendered_value;
-            break;
-        default:
-            profile_field.value = field_value.value;
-        }
-        profile_data.push(profile_field);
-    });
+    var profile_data = page_params.custom_profile_fields
+        .map(function (f) {return get_custom_profile_field_data(user, f, field_types, dateFormat);})
+        .filter(function (f) {return f.name !== undefined;});
 
     var args = {
         full_name: user.full_name,
-        email: user.email,
+        email: get_visible_email(user),
         profile_data: profile_data,
         user_avatar: "avatar/" + user.email + "/medium",
         is_me: people.is_current_user(user.email),
-        date_joined: moment(user.date_joined).format(localFormat),
+        date_joined: moment(user.date_joined).format(dateFormat),
         last_seen: buddy_data.user_last_seen_time_status(user.user_id),
+        show_email: settings_org.show_email(),
         user_time: people.get_user_time(user.user_id),
         user_type: people.get_user_type(user.user_id),
         user_is_guest: user.is_guest,
     };
 
-    $("#user-profile-modal-holder").html(templates.render("user_profile_modal", args));
-    ui.set_up_scrollbar($("#user-profile-modal #body"));
+    $("#user-profile-modal-holder").html(render_user_profile_modal(args));
     $("#user-profile-modal").modal("show");
 
-    settings_account.intialize_custom_user_type_fields("#user-profile-modal #content", user.user_id, false, false);
+    settings_account.initialize_custom_user_type_fields("#user-profile-modal #content", user.user_id, false, false);
 };
 
 function get_user_info_popover_items() {
@@ -333,7 +370,7 @@ function show_user_group_info_popover(element, group, message) {
     // hardcoded pixel height of the popover
     // note that the actual size varies (in group size), but this is about as big as it gets
     var popover_size = 390;
-    popovers.hide_all();
+    exports.hide_all();
     if (last_popover_elem !== undefined
         && last_popover_elem.get()[0] === element) {
         // We want it to be the case that a user can dismiss a popover
@@ -350,19 +387,19 @@ function show_user_group_info_popover(element, group, message) {
         };
         elt.popover({
             placement: calculate_info_popover_placement(popover_size, elt),
-            template: templates.render('user_group_info_popover', {class: "message-info-popover"}),
-            content: templates.render('user_group_info_popover_content', args),
+            template: render_user_group_info_popover({class: "message-info-popover"}),
+            content: render_user_group_info_popover_content(args),
+            html: true,
             trigger: "manual",
         });
         elt.popover("show");
-        ui.set_up_scrollbar($('.group-info-popover .member-list'));
         current_message_info_popover_elem = elt;
     }
 }
 
 exports.toggle_actions_popover = function (element, id) {
     var last_popover_elem = current_actions_popover_elem;
-    popovers.hide_all();
+    exports.hide_all();
     if (last_popover_elem !== undefined
         && last_popover_elem.get()[0] === element) {
         // We want it to be the case that a user can dismiss a popover
@@ -419,6 +456,10 @@ exports.toggle_actions_popover = function (element, id) {
                 editability === message_edit.editability_types.TOPIC_ONLY;
         var should_display_quote_and_reply = message.content !== '<p>(deleted)</p>';
 
+        var conversation_time_uri = hash_util.by_conversation_and_time_uri(message)
+            .replace(/\(/g, '%28')
+            .replace(/\)/g, '%29');
+
         var should_display_delete_option = message_edit.get_deletability(message);
         var args = {
             message_id: message.id,
@@ -433,7 +474,7 @@ exports.toggle_actions_popover = function (element, id) {
             should_display_uncollapse: should_display_uncollapse,
             should_display_add_reaction_option: message.sent_by_me,
             should_display_edit_history_option: should_display_edit_history_option,
-            conversation_time_uri: hash_util.by_conversation_and_time_uri(message),
+            conversation_time_uri: conversation_time_uri,
             narrowed: narrow_state.active(),
             should_display_delete_option: should_display_delete_option,
             should_display_reminder_option: feature_flags.reminders_in_message_action_menu,
@@ -446,7 +487,8 @@ exports.toggle_actions_popover = function (element, id) {
             // Popover height with 7 items in it is ~190 px
             placement: message_viewport.height() - ypos < 220 ? 'top' : 'bottom',
             title: "",
-            content: templates.render('actions_popover_content', args),
+            content: render_actions_popover_content(args),
+            html: true,
             trigger: "manual",
         });
         elt.popover("show");
@@ -455,7 +497,7 @@ exports.toggle_actions_popover = function (element, id) {
 };
 
 exports.render_actions_remind_popover = function (element, id) {
-    popovers.hide_all();
+    exports.hide_all();
     $(element).closest('.message_row').toggleClass('has_popover has_actions_popover');
     current_msg_list.select_id(id);
     var elt = $(element);
@@ -469,7 +511,8 @@ exports.render_actions_remind_popover = function (element, id) {
             // Popover height with 7 items in it is ~190 px
             placement: message_viewport.height() - ypos < 220 ? 'top' : 'bottom',
             title: "",
-            content: templates.render('remind_me_popover_content', args),
+            content: render_remind_me_popover_content(args),
+            html: true,
             trigger: "manual",
         });
         elt.popover("show");
@@ -543,7 +586,7 @@ exports.open_message_menu = function (message) {
     }
 
     var id = message.id;
-    popovers.toggle_actions_popover($(".selected_message .actions_hover")[0], id);
+    exports.toggle_actions_popover($(".selected_message .actions_hover")[0], id);
     if (current_actions_popover_elem) {
         focus_first_action_popover_item();
     }
@@ -560,7 +603,7 @@ exports.actions_popped = function () {
 };
 
 exports.hide_actions_popover = function () {
-    if (popovers.actions_popped()) {
+    if (exports.actions_popped()) {
         $('.has_popover').removeClass('has_popover has_actions_popover');
         current_actions_popover_elem.popover("destroy");
         current_actions_popover_elem = undefined;
@@ -660,7 +703,7 @@ exports.register_click_handlers = function () {
     $("#main_div").on("click", ".actions_hover", function (e) {
         var row = $(this).closest(".message_row");
         e.stopPropagation();
-        popovers.toggle_actions_popover(this, rows.id(row));
+        exports.toggle_actions_popover(this, rows.id(row));
     });
 
     $("#main_div").on("click", ".sender_name, .sender_name-in-status, .inline_profile_picture", function (e) {
@@ -710,7 +753,7 @@ exports.register_click_handlers = function () {
     $('body').on('click', '.info_popover_actions .narrow_to_private_messages', function (e) {
         var user_id = $(e.target).parents('ul').attr('data-user-id');
         var email = people.get_person_from_user_id(user_id).email;
-        popovers.hide_message_info_popover();
+        exports.hide_message_info_popover();
         narrow.by('pm-with', email, {trigger: 'user sidebar popover'});
         e.stopPropagation();
         e.preventDefault();
@@ -719,7 +762,7 @@ exports.register_click_handlers = function () {
     $('body').on('click', '.info_popover_actions .narrow_to_messages_sent', function (e) {
         var user_id = $(e.target).parents('ul').attr('data-user-id');
         var email = people.get_person_from_user_id(user_id).email;
-        popovers.hide_message_info_popover();
+        exports.hide_message_info_popover();
         narrow.by('sender', email, {trigger: 'user sidebar popover'});
         e.stopPropagation();
         e.preventDefault();
@@ -733,8 +776,8 @@ exports.register_click_handlers = function () {
         var name = people.get_person_from_user_id(user_id).full_name;
         var mention = people.get_mention_syntax(name, user_id);
         compose_ui.insert_syntax_and_focus(mention);
-        popovers.hide_user_sidebar_popover();
-        popovers.hide_userlist_sidebar();
+        exports.hide_user_sidebar_popover();
+        exports.hide_userlist_sidebar();
         e.stopPropagation();
         e.preventDefault();
     });
@@ -747,7 +790,7 @@ exports.register_click_handlers = function () {
         var name = people.get_person_from_user_id(user_id).full_name;
         var mention = people.get_mention_syntax(name, user_id);
         compose_ui.insert_syntax_and_focus(mention);
-        popovers.hide_message_info_popover();
+        exports.hide_message_info_popover();
         e.stopPropagation();
         e.preventDefault();
     });
@@ -772,6 +815,12 @@ exports.register_click_handlers = function () {
         });
     });
 
+    $('body').on('click', '.bot-owner-name', function (e) {
+        var user_id = $(e.target).attr('data-bot-owner-id');
+        var user = people.get_person_from_user_id(user_id);
+        exports.show_user_profile(user);
+    });
+
     $('body').on('click', '#user-profile-modal #name #edit-button', function () {
         exports.hide_user_profile();
     });
@@ -783,21 +832,21 @@ exports.register_click_handlers = function () {
     });
 
     $('body').on('click', '.set_away_status', function (e) {
-        popovers.hide_all();
+        exports.hide_all();
         user_status.server_set_away();
         e.stopPropagation();
         e.preventDefault();
     });
 
     $('body').on('click', '.revoke_away_status', function (e) {
-        popovers.hide_all();
+        exports.hide_all();
         user_status.server_revoke_away();
         e.stopPropagation();
         e.preventDefault();
     });
 
     $('body').on('click', '.update_status_text', function (e) {
-        popovers.hide_all();
+        exports.hide_all();
 
         user_status_ui.open_overlay();
 
@@ -815,13 +864,17 @@ exports.register_click_handlers = function () {
 
         if (String(current_user_sidebar_user_id) === user_id) {
             // If the popover is already shown, clicking again should toggle it.
-            popovers.hide_all();
+            // We don't want to hide the sidebars on smaller browser windows.
+            exports.hide_all_except_sidebars();
             return;
         }
-        popovers.hide_all();
+        exports.hide_all();
 
         if (userlist_placement === "right") {
-            popovers.show_userlist_sidebar();
+            exports.show_userlist_sidebar();
+        } else {
+            // Maintain the same behavior when displaying with the streamlist.
+            stream_popover.show_streamlist_sidebar();
         }
 
         var user = people.get_person_from_user_id(user_id);
@@ -851,14 +904,14 @@ exports.register_click_handlers = function () {
         // compose_actions.respond_to_message doesn't take a message
         // argument).
         compose_actions.quote_and_reply({trigger: 'popover respond'});
-        popovers.hide_actions_popover();
+        exports.hide_actions_popover();
         e.stopPropagation();
         e.preventDefault();
     });
 
     $('body').on('click', '.reminder_button', function (e) {
-        var msgid = $(e.currentTarget).data('message-id');
-        popovers.render_actions_remind_popover($(".selected_message .actions_hover")[0], msgid);
+        var message_id = $(e.currentTarget).data('message-id');
+        exports.render_actions_remind_popover($(".selected_message .actions_hover")[0], message_id);
         e.stopPropagation();
         e.preventDefault();
     });
@@ -872,7 +925,7 @@ exports.register_click_handlers = function () {
     function reminder_click_handler(datestr, e) {
         var id = $(".remind.custom").data('message-id');
         reminder.do_set_reminder_for_message(id, datestr);
-        popovers.hide_all();
+        exports.hide_all();
         e.stopPropagation();
         e.preventDefault();
     }
@@ -918,16 +971,16 @@ exports.register_click_handlers = function () {
         compose_actions.start('private', {
             trigger: 'popover send private',
             private_message_recipient: email});
-        popovers.hide_all();
+        exports.hide_all();
         e.stopPropagation();
         e.preventDefault();
     });
     $('body').on('click', '.popover_toggle_collapse', function (e) {
-        var msgid = $(e.currentTarget).data('message-id');
-        var row = current_msg_list.get_row(msgid);
+        var message_id = $(e.currentTarget).data('message-id');
+        var row = current_msg_list.get_row(message_id);
         var message = current_msg_list.get(rows.id(row));
 
-        popovers.hide_actions_popover();
+        exports.hide_actions_popover();
 
         if (row) {
             if (message.collapsed) {
@@ -941,20 +994,20 @@ exports.register_click_handlers = function () {
         e.preventDefault();
     });
     $('body').on('click', '.popover_edit_message', function (e) {
-        var msgid = $(e.currentTarget).data('message-id');
-        var row = current_msg_list.get_row(msgid);
-        popovers.hide_actions_popover();
+        var message_id = $(e.currentTarget).data('message-id');
+        var row = current_msg_list.get_row(message_id);
+        exports.hide_actions_popover();
         message_edit.start(row);
         e.stopPropagation();
         e.preventDefault();
     });
     $('body').on('click', '.view_edit_history', function (e) {
-        var msgid = $(e.currentTarget).data('msgid');
-        var row = current_msg_list.get_row(msgid);
+        var message_id = $(e.currentTarget).data('message-id');
+        var row = current_msg_list.get_row(message_id);
         var message = current_msg_list.get(rows.id(row));
         var message_history_cancel_btn = $('#message-history-cancel');
 
-        popovers.hide_actions_popover();
+        exports.hide_actions_popover();
         message_edit.show_history(message);
         message_history_cancel_btn.focus();
         e.stopPropagation();
@@ -965,7 +1018,7 @@ exports.register_click_handlers = function () {
         var stream_id = $(e.currentTarget).attr('data-msg-stream-id');
         var topic = $(e.currentTarget).attr('data-msg-topic');
 
-        popovers.hide_actions_popover();
+        exports.hide_actions_popover();
         muting_ui.mute(stream_id, topic);
         e.stopPropagation();
         e.preventDefault();
@@ -975,16 +1028,16 @@ exports.register_click_handlers = function () {
         var stream_id = $(e.currentTarget).attr('data-msg-stream-id');
         var topic = $(e.currentTarget).attr('data-msg-topic');
 
-        popovers.hide_actions_popover();
+        exports.hide_actions_popover();
         muting_ui.unmute(stream_id, topic);
         e.stopPropagation();
         e.preventDefault();
     });
 
     $('body').on('click', '.delete_message', function (e) {
-        var msgid = $(e.currentTarget).data('message-id');
-        popovers.hide_actions_popover();
-        message_edit.delete_message(msgid);
+        var message_id = $(e.currentTarget).data('message-id');
+        exports.hide_actions_popover();
+        message_edit.delete_message(message_id);
         e.stopPropagation();
         e.preventDefault();
     });
@@ -992,7 +1045,7 @@ exports.register_click_handlers = function () {
     new ClipboardJS('.copy_link');
 
     $('body').on('click', '.copy_link', function (e) {
-        popovers.hide_actions_popover();
+        exports.hide_actions_popover();
         var id = $(this).attr("data-message-id");
         var row = $("[zid='" + id + "']");
         row.find(".alert-msg")
@@ -1024,7 +1077,7 @@ exports.register_click_handlers = function () {
             // only run `popovers.hide_all()` if the last scroll was more
             // than 250ms ago.
             if (date - last_scroll > 250) {
-                popovers.hide_all();
+                exports.hide_all();
             }
 
             // update the scroll time on every event to make sure it doesn't
@@ -1037,28 +1090,27 @@ exports.register_click_handlers = function () {
 exports.any_active = function () {
     // True if any popover (that this module manages) is currently shown.
     // Expanded sidebars on mobile view count as popovers as well.
-    return popovers.actions_popped() || user_sidebar_popped() ||
+    return exports.actions_popped() || user_sidebar_popped() ||
         stream_popover.stream_popped() || stream_popover.topic_popped() ||
         exports.message_info_popped() || emoji_picker.reactions_popped() ||
         $("[class^='column-'].expanded").length;
 };
 
-// This function will hide all true popovers (the userlist sidebar
-// uses the popover infrastructure, but doesn't work like a popover
-// structurally).
-exports.hide_all_except_userlist_sidebar = function () {
+// This function will hide all true popovers (the streamlist and
+// userlist sidebars use the popover infrastructure, but doesn't work
+// like a popover structurally).
+exports.hide_all_except_sidebars = function () {
     $('.has_popover').removeClass('has_popover has_actions_popover has_emoji_popover');
-    popovers.hide_actions_popover();
-    popovers.hide_message_info_popover();
+    exports.hide_actions_popover();
+    exports.hide_message_info_popover();
     emoji_picker.hide_emoji_popover();
     stream_popover.hide_stream_popover();
     stream_popover.hide_topic_popover();
     stream_popover.hide_all_messages_popover();
     stream_popover.hide_starred_messages_popover();
-    popovers.hide_user_sidebar_popover();
-    popovers.hide_mobile_message_buttons_popover();
-    stream_popover.restore_stream_list_size();
-    popovers.hide_user_profile();
+    exports.hide_user_sidebar_popover();
+    exports.hide_mobile_message_buttons_popover();
+    exports.hide_user_profile();
 
     // look through all the popovers that have been added and removed.
     list_of_popovers.forEach(function ($o) {
@@ -1069,11 +1121,12 @@ exports.hide_all_except_userlist_sidebar = function () {
     list_of_popovers = [];
 };
 
-// This function will hide all the popovers, including the userlist
-// sidebar.
+// This function will hide all the popovers, including the mobile web
+// or narrow window sidebars.
 exports.hide_all = function () {
-    popovers.hide_userlist_sidebar();
-    popovers.hide_all_except_userlist_sidebar();
+    exports.hide_userlist_sidebar();
+    stream_popover.hide_streamlist_sidebar();
+    exports.hide_all_except_sidebars();
 };
 
 exports.set_userlist_placement = function (placement) {
@@ -1123,10 +1176,4 @@ exports.compute_placement = function (elt, popover_height, popover_width,
     return placement;
 };
 
-return exports;
-}());
-
-if (typeof module !== 'undefined') {
-    module.exports = popovers;
-}
-window.popovers = popovers;
+window.popovers = exports;

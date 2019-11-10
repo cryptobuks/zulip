@@ -7,6 +7,7 @@ Subsystems Documentation
 
    dependencies
    settings
+   html-css
    events-system
    sending-messages
    queuing
@@ -16,18 +17,13 @@ Subsystems Documentation
    caching
    realms
    management-commands
-   front-end-build-process
    schema-migrations
-   migration-renumbering
-   html_css
    hashchange-system
    emoji
    hotspots
    full-text-search
-   auth
    email
    analytics
-   html-templates
    client
    logging
    typing-indicators
@@ -35,14 +31,10 @@ Subsystems Documentation
    django-upgrades
    release-checklist
    api-release-checklist
-   openapi-api-docs
    conversion
    input-pills
    thumbnailing
    presence
    unread_messages
    billing
-   documentation
-   user-docs
-   integration-docs
    widgets

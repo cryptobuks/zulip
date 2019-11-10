@@ -37,8 +37,6 @@ below, and add more to your repertoire as needed.
 
 * **Next unread private message**: `p`
 
-* **All private messages**: `P`
-
 * **Search messages**: `/`
 
 * **Toggle keyboard shortcuts view**: `?`
@@ -72,7 +70,7 @@ below, and add more to your repertoire as needed.
 
 * **Narrow to stream**: `s`
 
-* **Narrow to topic**: `S`
+* **Narrow to topic or PM conversation**: `S`
 
 * **Narrow to all private messages**: `P`
 
@@ -107,12 +105,16 @@ below, and add more to your repertoire as needed.
   settings. See
   [enable enter to send](https://zulipchat.com/help/enable-enter-to-send).
 
+* **Insert italic text**: `*italic*` or `Ctrl + I`
+* **Insert bold text**: `**bold**` or `Ctrl + B`
+* **Insert link**: `[Zulip website](https://zulip.org)` or `Ctrl + Shift + L`
+
 * **Cancel compose**: `Esc` or `Ctrl + [` — Close the compose box and save
   the unsent message as a draft.
 
 ## Message actions
 
-* **Edit last message**: `⇽` — Open the last editable message in the current
+* **Edit last message**: `←` — Open the last editable message in the current
   view (if any).
 
 ### For a selected message (outlined in blue)
@@ -121,7 +123,7 @@ below, and add more to your repertoire as needed.
 
 * **View image**: `v`
 
-* **Edit message**: `i` then `Enter`
+* **Edit message**: `e`
 
 * **Star message**: `Ctrl + s`
 
@@ -167,7 +169,7 @@ Keyboard navigation (e.g. arrow keys) works as expected.
         Pressing `↑` from the first stream in the list moves
         you to the **Filter streams** input.
 
-* **Switch between tabs**: `⇽` and `⇾` — Switch between the
+* **Switch between tabs**: `←` and `→` — Switch between the
 **Subscribed** and **All streams** tabs.
 
 * **Create new stream**: `n`

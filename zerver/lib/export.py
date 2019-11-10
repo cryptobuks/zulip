@@ -32,6 +32,7 @@ from zerver.models import UserProfile, Realm, Client, Huddle, Stream, \
     RealmAuditLog, UserHotspot, MutedTopic, Service, UserGroup, \
     UserGroupMembership, BotStorageData, BotConfigData
 from zerver.lib.parallel import run_parallel
+import zerver.lib.upload
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, \
     Union
 
@@ -83,6 +84,9 @@ ALL_ZULIP_TABLES = {
     'zerver_archivedusermessage',
     'zerver_attachment',
     'zerver_attachment_messages',
+    'zerver_archivedreaction',
+    'zerver_archivedsubmessage',
+    'zerver_archivetransaction',
     'zerver_botconfigdata',
     'zerver_botstoragedata',
     'zerver_client',
@@ -152,6 +156,7 @@ NON_EXPORTED_TABLES = {
     # These is used for scheduling future activity; it could make
     # sense to export, but is relatively low value.
     'zerver_scheduledemail',
+    'zerver_scheduledemail_users',
     'zerver_scheduledmessage',
 
     # These tables are related to a user's 2FA authentication
@@ -168,6 +173,9 @@ NON_EXPORTED_TABLES = {
     'zerver_archivedusermessage',
     'zerver_archivedattachment',
     'zerver_archivedattachment_messages',
+    'zerver_archivedreaction',
+    'zerver_archivedsubmessage',
+    'zerver_archivetransaction',
 
     # Social auth tables are not needed post-export, since we don't
     # use any of this state outside of a direct authentication flow.
@@ -233,7 +241,7 @@ ANALYTICS_TABLES = {
 # inspecting the corresponding Django models
 DATE_FIELDS = {
     'zerver_attachment': ['create_time'],
-    'zerver_message': ['last_edit_time', 'pub_date'],
+    'zerver_message': ['last_edit_time', 'date_sent'],
     'zerver_realm': ['date_created'],
     'zerver_stream': ['date_created'],
     'zerver_useractivity': ['last_visit'],
@@ -903,11 +911,15 @@ def fetch_huddle_objects(response: TableData, config: Config, context: Context) 
 def fetch_usermessages(realm: Realm,
                        message_ids: Set[int],
                        user_profile_ids: Set[int],
-                       message_filename: Path) -> List[Record]:
+                       message_filename: Path,
+                       consent_message_id: Optional[int]=None) -> List[Record]:
     # UserMessage export security rule: You can export UserMessages
     # for the messages you exported for the users in your realm.
     user_message_query = UserMessage.objects.filter(user_profile__realm=realm,
                                                     message_id__in=message_ids)
+    if consent_message_id is not None:
+        consented_user_ids = get_consented_user_ids(consent_message_id)
+        user_profile_ids = user_profile_ids & consented_user_ids
     user_message_chunk = []
     for user_message in user_message_query:
         if user_message.user_profile_id not in user_profile_ids:
@@ -919,7 +931,8 @@ def fetch_usermessages(realm: Realm,
     logging.info("Fetched UserMessages for %s" % (message_filename,))
     return user_message_chunk
 
-def export_usermessages_batch(input_path: Path, output_path: Path) -> None:
+def export_usermessages_batch(input_path: Path, output_path: Path,
+                              consent_message_id: Optional[int]=None) -> None:
     """As part of the system for doing parallel exports, this runs on one
     batch of Message objects and adds the corresponding UserMessage
     objects. (This is called by the export_usermessage_batch
@@ -931,7 +944,8 @@ def export_usermessages_batch(input_path: Path, output_path: Path) -> None:
     del output['zerver_userprofile_ids']
     realm = Realm.objects.get(id=output['realm_id'])
     del output['realm_id']
-    output['zerver_usermessage'] = fetch_usermessages(realm, set(message_ids), user_profile_ids, output_path)
+    output['zerver_usermessage'] = fetch_usermessages(realm, set(message_ids), user_profile_ids,
+                                                      output_path, consent_message_id)
     write_message_export(output_path, output)
     os.unlink(input_path)
 
@@ -943,7 +957,8 @@ def export_partial_message_files(realm: Realm,
                                  response: TableData,
                                  chunk_size: int=MESSAGE_BATCH_CHUNK_SIZE,
                                  output_dir: Optional[Path]=None,
-                                 public_only: bool=False) -> Set[int]:
+                                 public_only: bool=False,
+                                 consent_message_id: Optional[int]=None) -> Set[int]:
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix="zulip-export")
 
@@ -972,32 +987,57 @@ def export_partial_message_files(realm: Realm,
         response['zerver_userprofile_mirrordummy'] +
         response['zerver_userprofile_crossrealm'])
 
+    consented_user_ids = set()  # type: Set[int]
+    if consent_message_id is not None:
+        consented_user_ids = get_consented_user_ids(consent_message_id)
+
     if public_only:
         recipient_streams = Stream.objects.filter(realm=realm, invite_only=False)
         recipient_ids = Recipient.objects.filter(
             type=Recipient.STREAM, type_id__in=recipient_streams).values_list("id", flat=True)
         recipient_ids_for_us = get_ids(response['zerver_recipient']) & set(recipient_ids)
+    elif consent_message_id is not None:
+        public_streams = Stream.objects.filter(realm=realm, invite_only=False)
+        public_stream_recipient_ids = Recipient.objects.filter(
+            type=Recipient.STREAM, type_id__in=public_streams).values_list("id", flat=True)
+
+        consented_recipient_ids = Subscription.objects.filter(user_profile__id__in=consented_user_ids). \
+            values_list("recipient_id", flat=True)
+
+        recipient_ids = set(public_stream_recipient_ids) | set(consented_recipient_ids)
+        recipient_ids_for_us = get_ids(response['zerver_recipient']) & recipient_ids
     else:
         recipient_ids_for_us = get_ids(response['zerver_recipient'])
-
-    # We capture most messages here, since the
-    # recipients we subscribe to are also the
-    # recipients of most messages we send.
-    messages_we_received = Message.objects.filter(
-        sender__in=ids_of_our_possible_senders,
-        recipient__in=recipient_ids_for_us,
-    ).order_by('id')
+        # For a full export, we have implicit consent for all users in the export.
+        consented_user_ids = user_ids_for_us
 
     if public_only:
+        messages_we_received = Message.objects.filter(
+            sender__in=ids_of_our_possible_senders,
+            recipient__in=recipient_ids_for_us,
+        ).order_by('id')
+
         # For the public stream export, we only need the messages those streams received.
         message_queries = [
             messages_we_received,
         ]
     else:
-        # This should pick up stragglers; messages we sent
-        # where we the recipient wasn't subscribed to by any of
-        # us (such as PMs to "them").
-        ids_of_non_exported_possible_recipients = ids_of_our_possible_senders - user_ids_for_us
+        # We capture most messages here: Messages that were sent by
+        # anyone in the export and received by any of the users who we
+        # have consent to export.
+        messages_we_received = Message.objects.filter(
+            sender__in=ids_of_our_possible_senders,
+            recipient__in=recipient_ids_for_us,
+        ).order_by('id')
+
+        # The above query is missing some messages that consenting
+        # users have access to, namely, PMs sent by one of the users
+        # in our export to another user (since the only subscriber to
+        # a Recipient object for Recipient.PERSONAL is the recipient,
+        # not the sender).  The `consented_user_ids` list has
+        # precisely those users whose Recipient.PERSONAL recipient ID
+        # was already present in recipient_ids_for_us above.
+        ids_of_non_exported_possible_recipients = ids_of_our_possible_senders - consented_user_ids
 
         recipients_for_them = Recipient.objects.filter(
             type=Recipient.PERSONAL,
@@ -1005,7 +1045,7 @@ def export_partial_message_files(realm: Realm,
         recipient_ids_for_them = get_ids(recipients_for_them)
 
         messages_we_sent_to_them = Message.objects.filter(
-            sender__in=user_ids_for_us,
+            sender__in=consented_user_ids,
             recipient__in=recipient_ids_for_them,
         ).order_by('id')
 
@@ -1161,7 +1201,7 @@ def _save_s3_object_to_file(
     else:
         fields = key.name.split('/')
         if len(fields) != 3:
-            raise AssertionError("Suspicious key with invalid format %s" % (key.name))
+            raise AssertionError("Suspicious key with invalid format %s" % (key.name,))
         filename = os.path.join(output_dir, key.name)
 
     dirname = os.path.dirname(filename)
@@ -1176,7 +1216,7 @@ def export_files_from_s3(realm: Realm, bucket_name: str, output_dir: Path,
     bucket = conn.get_bucket(bucket_name, validate=True)
     records = []
 
-    logging.info("Downloading uploaded files from %s" % (bucket_name))
+    logging.info("Downloading uploaded files from %s" % (bucket_name,))
 
     avatar_hash_values = set()
     user_ids = set()
@@ -1335,7 +1375,8 @@ def do_write_stats_file_for_realm_export(output_dir: Path) -> None:
     with open(stats_file, 'w') as f:
         for fn in fns:
             f.write(os.path.basename(fn) + '\n')
-            payload = open(fn).read()
+            with open(fn, 'r') as filename:
+                payload = filename.read()
             data = ujson.loads(payload)
             for k in sorted(data):
                 f.write('%5d %s\n' % (len(data[k]), k))
@@ -1346,14 +1387,16 @@ def do_write_stats_file_for_realm_export(output_dir: Path) -> None:
 
         for fn in [avatar_file, uploads_file]:
             f.write(fn+'\n')
-            payload = open(fn).read()
+            with open(fn, 'r') as filename:
+                payload = filename.read()
             data = ujson.loads(payload)
-            f.write('%5d records\n' % len(data))
+            f.write('%5d records\n' % (len(data),))
             f.write('\n')
 
 def do_export_realm(realm: Realm, output_dir: Path, threads: int,
                     exportable_user_ids: Optional[Set[int]]=None,
-                    public_only: bool=False) -> None:
+                    public_only: bool=False,
+                    consent_message_id: Optional[int]=None) -> str:
     response = {}  # type: TableData
 
     # We need at least one thread running to export
@@ -1387,8 +1430,9 @@ def do_export_realm(realm: Realm, output_dir: Path, threads: int,
     # have millions of messages.
     logging.info("Exporting .partial files messages")
     message_ids = export_partial_message_files(realm, response, output_dir=output_dir,
-                                               public_only=public_only)
-    logging.info('%d messages were exported' % (len(message_ids)))
+                                               public_only=public_only,
+                                               consent_message_id=consent_message_id)
+    logging.info('%d messages were exported' % (len(message_ids),))
 
     # zerver_reaction
     zerver_reaction = {}  # type: TableData
@@ -1407,10 +1451,23 @@ def do_export_realm(realm: Realm, output_dir: Path, threads: int,
     export_attachment_table(realm=realm, output_dir=output_dir, message_ids=message_ids)
 
     # Start parallel jobs to export the UserMessage objects.
-    launch_user_message_subprocesses(threads=threads, output_dir=output_dir)
+    launch_user_message_subprocesses(threads=threads, output_dir=output_dir,
+                                     consent_message_id=consent_message_id)
 
-    logging.info("Finished exporting %s" % (realm.string_id))
+    logging.info("Finished exporting %s" % (realm.string_id,))
     create_soft_link(source=output_dir, in_progress=False)
+
+    do_write_stats_file_for_realm_export(output_dir)
+
+    # We need to change back to the current working directory after writing
+    # the tarball to the output directory, otherwise the state is compromised
+    # for our unit tests.
+    reset_dir = os.getcwd()
+    tarball_path = output_dir.rstrip('/') + '.tar.gz'
+    os.chdir(os.path.dirname(output_dir))
+    subprocess.check_call(["tar", "-czf", tarball_path, os.path.basename(output_dir)])
+    os.chdir(reset_dir)
+    return tarball_path
 
 def export_attachment_table(realm: Realm, output_dir: Path, message_ids: Set[int]) -> None:
     response = {}  # type: TableData
@@ -1441,14 +1498,21 @@ def create_soft_link(source: Path, in_progress: bool=True) -> None:
     if is_done:
         logging.info('See %s for output files' % (new_target,))
 
-
-def launch_user_message_subprocesses(threads: int, output_dir: Path) -> None:
+def launch_user_message_subprocesses(threads: int, output_dir: Path,
+                                     consent_message_id: Optional[int]=None) -> None:
     logging.info('Launching %d PARALLEL subprocesses to export UserMessage rows' % (threads,))
 
     def run_job(shard: str) -> int:
-        subprocess.call([os.path.join(settings.DEPLOY_ROOT, "manage.py"),
-                         'export_usermessage_batch', '--path',
-                         str(output_dir), '--thread', shard])
+        arguments = [
+            os.path.join(settings.DEPLOY_ROOT, "manage.py"),
+            'export_usermessage_batch',
+            '--path', str(output_dir),
+            '--thread', shard
+        ]
+        if consent_message_id is not None:
+            arguments.extend(['--consent-message-id', str(consent_message_id)])
+
+        subprocess.call(arguments)
         return 0
 
     for (status, job) in run_parallel(run_job,
@@ -1503,6 +1567,16 @@ def get_single_user_config() -> Config:
     )
 
     # zerver_stream
+    #
+    # TODO: We currently export the existence of private streams, but
+    # not their message history, in the "export with partial member
+    # consent" code path.  This consistent with our documented policy,
+    # since that data is available to the organization administrator
+    # who initiated the export, but unnecessary and potentially
+    # confusing; it'd be better to just skip those streams from the
+    # export (which would require more complex export logic for the
+    # subscription/recipient/stream tables to exclude private streams
+    # with no consenting subscribers).
     Config(
         table='zerver_stream',
         model=Stream,
@@ -1593,3 +1667,54 @@ def get_analytics_config() -> Config:
     )
 
     return analytics_config
+
+def get_consented_user_ids(consent_message_id: int) -> Set[int]:
+    return set(Reaction.objects.filter(message__id=consent_message_id,
+                                       reaction_type="unicode_emoji",
+                                       # outbox = 1f4e4
+                                       emoji_code="1f4e4").
+               values_list("user_profile", flat=True))
+
+def export_realm_wrapper(realm: Realm, output_dir: str,
+                         threads: int, upload: bool,
+                         public_only: bool,
+                         delete_after_upload: bool,
+                         consent_message_id: Optional[int]=None) -> Optional[str]:
+    tarball_path = do_export_realm(realm=realm, output_dir=output_dir,
+                                   threads=threads, public_only=public_only,
+                                   consent_message_id=consent_message_id)
+    print("Finished exporting to %s" % (output_dir,))
+    print("Tarball written to %s" % (tarball_path,))
+
+    if not upload:
+        return None
+
+    # We upload to the `avatars` bucket because that's world-readable
+    # without additional configuration.  We'll likely want to change
+    # that in the future.
+    print("Uploading export tarball...")
+    public_url = zerver.lib.upload.upload_backend.upload_export_tarball(realm, tarball_path)
+    print()
+    print("Uploaded to %s" % (public_url,))
+
+    if delete_after_upload:
+        os.remove(tarball_path)
+        print("Successfully deleted the tarball at %s" % (tarball_path,))
+    return public_url
+
+def get_realm_exports_serialized(user: UserProfile) -> List[Dict[str, Any]]:
+    all_exports = RealmAuditLog.objects.filter(realm=user.realm,
+                                               event_type=RealmAuditLog.REALM_EXPORTED)
+    exports_dict = {}
+    for export in all_exports:
+        export_data = ujson.loads(export.extra_data)
+        export_url = zerver.lib.upload.upload_backend.get_export_tarball_url(
+            user.realm, export_data['export_path'])
+        exports_dict[export.id] = dict(
+            id=export.id,
+            export_time=export.event_time.timestamp(),
+            acting_user_id=export.acting_user.id,
+            export_url=export_url,
+            deleted_timestamp=export_data.get('deleted_timestamp'),
+        )
+    return sorted(exports_dict.values(), key=lambda export_dict: export_dict['id'])
